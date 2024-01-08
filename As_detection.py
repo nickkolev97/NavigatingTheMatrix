@@ -67,7 +67,7 @@ class Feature(object):
 #############################################################################################
 # TODO: should probably integrate this into one with the navigating the matrix python code 
 
-def Si_Scan(object):
+class Si_Scan(object):
     '''
     Si scan object that contains all the information about the scan and the different features.
     Contains filled and empty states but not trace up and trace down.
