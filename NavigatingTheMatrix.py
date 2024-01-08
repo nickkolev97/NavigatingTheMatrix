@@ -16,10 +16,36 @@ from despike.median import mask, median
 
 mtrx_data = access2thematrix.MtrxData()
 
-# Base class for STM images
 class STM(object):
+    '''
+    This is the STM class which represents Scanning Tunneling Microscopy images.
 
+    Attributes:
+        file (str): The file path of the image.
+        y_offset (float): The y-offset for the image.
+        x_offset (float): The x-offset for the image.
+        angle (float): The angle of the image.
+        width (float): The width of the image in nm.
+        height (float): The height of the image in nm.
+        data (dict): A dictionary of the traces and retraces.
+        error (dict): A dictionary of the error traces and retraces.
+        trace/retrace_up/down (np.array): The trace/retrace of the up/down scan.
+        trace/retrace_up/down_proc (np.array): The processed trace/retrace of the up/down scan.
+        steps_present (bool): Whether there are steps present in the image.
+        standard_pix_ratio (bool or float): The standard pixel ratio. False if you don't want the pixels to be downsampled, or the ratio if you do want it downsampled (num_pix/nm e.g. 512/100).
+    '''
     def __init__(self, file, y_offset, x_offset, angle, steps_present = False, standard_pix_ratio=False):
+        """
+        The constructor for the STM class.
+
+        Parameters:
+            file (str): The file path of the image.
+            y_offset (float): The y-offset for the image.
+            x_offset (float): The x-offset for the image.
+            angle (float): The angle of the image.
+            steps_present (bool): Whether there are steps present in the image.
+            standard_pix_ratio (bool or float): The standard pixel ratio. False if you don't want the pixels to be downsampled, or the ratio if you do want it downsampled (num_pix/nm e.g. 512/100).
+        """
 
         self.file = file
        
@@ -28,7 +54,7 @@ class STM(object):
         self.width = None
         self.height = None
         self.step_present = steps_present
-        self.standard_pix_ratio = standard_pix_ratio # this is either false if you don't want the pix to be downsample, or the ratio if you do want it downsampled (num_pix/nm e.g. 512/100)
+        self.standard_pix_ratio = standard_pix_ratio 
         # open the topography file using access to the matrix. It is returned as a dictionary of the traces and retraces
         self.data = self._open_file(file)
         # now open the error file too
@@ -53,13 +79,6 @@ class STM(object):
         self.trace_down_proc = None
         self.retrace_down_proc = None
         
-        # get the lattice parameters for the different traces
-        # we use the unprocessed scans since their FFTs have less noise around 0.
-        self.trace_up_lat_param = { 'angle 1': None ,'lattice const 1': None, 'angle 2': None,
-                                    'lattice const 2': None}
-        self.trace_down_lat_param = { 'angle 1': None ,'lattice const 1': None, 'angle 2': None,
-                                    'lattice const 2': None}
-
         self.size = np.asarray([self.width, self.height])
         self.y_offset = y_offset
         self.x_offset = x_offset
@@ -68,68 +87,31 @@ class STM(object):
         # create instance of detector class that does the image cleanup
         self.scanner = Detector()
 
+        '''
+        Working progress on trying to get the true area of the scan by using FFTs to find lattice parameters.
+        # get the lattice parameters for the different traces
+        # we use the unprocessed scans since their FFTs have less noise around 0.
+        self.trace_up_lat_param = { 'angle 1': None ,'lattice const 1': None, 'angle 2': None,
+                                    'lattice const 2': None}
+        self.trace_down_lat_param = { 'angle 1': None ,'lattice const 1': None, 'angle 2': None,
+                                    'lattice const 2': None}      
         # Calculate the true area in nm^2 using the lattice constants worked out.
         # It'll be a list. 0th element true are of trace up, 1st true area of trace down. 
         self.true_area = [0,0]
+        '''
 
-    def calc_true_area(self, up_down):
-        # w.l.o.g we can assume one side is x and the other y
-        # we use c^2 = a^2 + b^2 - 2ab*cos(theta)
-        
-        if up_down == 'trace up':
-            # trace up
-            a = self.trace_up_lat_param['lattice const 1']
-            a_theta = abs(self.trace_up_lat_param['angle 1'])
-            b = self.trace_up_lat_param['lattice const 2']
-            b_theta = abs(self.trace_up_lat_param['angle 2'])
-        if up_down == 'trace down':
-            # trace down
-            a = self.trace_down_lat_param['lattice const 1'] # this is 0.768nm
-            a_theta = abs(self.trace_down_lat_param['angle 1'])
-            b = self.trace_down_lat_param['lattice const 2'] # this is 0.768nm
-            b_theta = abs(self.trace_down_lat_param['angle 2'])
-        
-        
-        # decompose each into x and y components
-        a_x = a*np.sin(a_theta)
-        a_x_real = 0.768*np.sin(a_theta) # length of a_x in nm
-        a_y = a*np.cos(a_theta)
-        a_y_real = 0.768*np.cos(a_theta) # in nm
-        b_x = b*np.sin(b_theta)
-        b_x_real = 0.768*np.sin(b_theta) # in nm
-        b_y = b*np.cos(b_theta)
-        b_y_real = 0.768*np.cos(b_theta) # in nm
-        #print( 'ax' , a_x, 'ay', a_y, 'bx', b_x,'by', b_y, 'at', a_theta, 'bt', b_theta, 'axr', a_x_real, 'ayr', a_y_real, 'bxr', b_x_real, 'byr', b_y_real) # these thetas are larger
-        # take average of the two
-        c_x = 0.5 * (a_x + b_x)
-        c_x_real = 0.5 * (a_x_real + b_x_real)
-        c_y = 0.5 * (a_y + b_y)
-        c_y_real = 0.5 * (a_y_real + b_y_real)
-        # c_y and c_x are in pixels, but we know what each should correspond to in nm
-        pix_to_nm_ratio_x = c_x_real/c_x
-        pix_to_nm_ratio_y = c_y_real/c_y
-        # print('shape ', self.trace_up.shape)
-           
-        if up_down == 'trace up':
-            true_length_x = pix_to_nm_ratio_x * self.trace_up.shape[1]
-            true_length_y = pix_to_nm_ratio_y * self.trace_up.shape[0]
-          #  print('shape', self.trace_up.shape)
-            print('true lengths ', true_length_x, true_length_y, 'old length ', self.width)
-            area_up = true_length_x * true_length_y
-            self.true_area[0] = area_up
-        if up_down == 'trace down':
-            true_length_x = pix_to_nm_ratio_x * self.trace_down.shape[1]
-            true_length_y = pix_to_nm_ratio_y * self.trace_down.shape[0]
-           # print('shape', self.trace_down.shape)
-            print('true lengths ', true_length_x, true_length_y, 'old length ', self.width)
-            area_down = true_length_x * true_length_y
-            self.true_area[1] = area_down
 
     def _open_file(self, file):
-        # opens mtrx files and loads them as np matrices
+        '''
+        Opens the file and returns a dictionary of the traces and retraces.
+        parameters:
+            file (str): The file path of the image.
+        returns:
+            dictionary_of_images (dict): A dictionary of the traces and retraces.
+        '''
+
         traces, message = mtrx_data.open(file)
         dictionary_of_images = {}
-       # print(traces)
         if message[:5]=='Error':
             raise Exception('Error loading file. Check that file path is correct and that the folder includes a .mtrx file')
         for i in traces.keys():
@@ -140,15 +122,12 @@ class STM(object):
 
             im, message = mtrx_data.select_image(traces[i])
             im.data = 1e9*im.data
-          #  print(im.data.shape)
             if im.data.shape[0] != im.data.shape[1]:
                 scan_complete = False # scan was interupted before completion
             else: scan_complete = True
             
             width = int(im.width*1e9)
             nm_to_pix_ratio = im.data.shape[0]/width
-           # plt.imshow(im.data)
-           # plt.show()
             
             if self.standard_pix_ratio:
                 if nm_to_pix_ratio != self.standard_pix_ratio:
@@ -176,18 +155,27 @@ class STM(object):
             return dictionary_of_images
 
     def clean_up(self, scan, trace_or_retrace, plane_level=False, scan_line_align = True):
-        # only works for small scale scans ~100nm
-        # trace_or_retrace should be one of the following ['trace up', 'retrace up', 'trace down', 'retrace down'] depending on what it is
+        '''
+        Cleans up the scan using the detector class. Clean up consists of 
+        median filtering, plane levelling and scan line alignment.
+        Only works for small scale scans ~100nm.
+
+        Parameters:
+            scan (np.array): The scan to be cleaned up.
+            trace_or_retrace (str): Whether the scan is a trace or retrace. Should be one of
+                                    ['trace up', 'retrace up', 'trace down', 'retrace down'].
+            plane_level (bool): Whether to plane level the scan.
+            scan_line_align (bool): Whether to scan line align the scan.
+        
+        '''
         processed_data = median(scan)        
         if plane_level:
             processed_data = self.plane_level(processed_data)            
             if scan_line_align:
-                processed_data = self.scanner.Mesoscale_image_scanalign(processed_data)
+                processed_data = self._scan_line_align(processed_data)
         elif scan_line_align:
-            processed_data = self.scanner.Mesoscale_image_scanalign(processed_data)
+            processed_data = self._scan_line_align(processed_data)
         
-       # plt.imshow(processed_data)
-       # plt.show()
         if trace_or_retrace == 'trace up':
             self.trace_up_proc = processed_data
         if trace_or_retrace == 'retrace up':
@@ -198,10 +186,15 @@ class STM(object):
             self.retrace_down_proc = processed_data
 
     def plane_level(self, array):
-        # simple plane level. Assumes the whole scan is on same plane.
+        '''
+        Plane levels the scan. Assumes the whole scan is on the same plane.
+        Parameters:
+            array (np.array): The scan to be plane levelled.
+        Returns:
+            array_leveled (np.array): The plane levelled scan.
+        '''
+        
         res = array.shape[0]
-       # print('array shape', array.shape)
-        # plane level using these arrays/masks
         a = np.ogrid[0:res,0:res]
         x_pts = np.tile(a[0],res).flatten()
         y_pts = np.tile(a[1],res).flatten()
@@ -248,12 +241,21 @@ class STM(object):
         return array_leveled
 
     def correct_hysteresis(self, trace, retrace, up_down):
-        # corrects hysteresis.
-        # Could be optimised better. A lot of for loops that could be vectorised probably.
-        # returns the corrected trace, retrace, and a boolean depending on whether the hysteresis
-        # was possible to correct.
-        # up_down should say whether this is trace up or trace down and should be one of ('trace_up', 'trace_down')
+        '''
+        Corrects the hysteresis in the scan. Assumes the scan is square.
+        Uses the SIFT algorithm to find common points between trace and retrace.
 
+        Parameters:
+            trace (np.array): The trace of the scan.
+            retrace (np.array): The retrace of the scan.
+            up_down (str): Whether the scan is a trace up or trace down. Should be one of ['trace up', 'trace down'].
+        Returns:
+            tracec (np.array): The corrected trace.
+            retracec (np.array): The corrected retrace.
+            possible (bool): Whether the hysteresis correction was possible.    
+       
+        '''
+        
         res = trace.shape[0]
         # we need to use the OpenCV SIFT algorithm which needs the scan in a certain format
         bmap1 = cv2.normalize(trace, None, 0, 255, cv2.NORM_MINMAX).astype('uint8')
@@ -275,8 +277,6 @@ class STM(object):
         # Draw first 10 matches.
         #img3 = cv2.drawMatches(bmap1, kp1, bmap2, kp2, matches, None, flags=2)
 
-        #plt.imshow(img3),plt.show()
-
         # Now we have all the matches, we want to filter them. Not all of them are correct.
         # We filter by requiring that the y displacement is no more than a pixel and the 
         # x displacement is +/- 15pixels (if res=512). X is larger due to hysteresis
@@ -295,16 +295,15 @@ class STM(object):
                     coord2s.append(coord2)
 
         # Draw first 10 matches.
-        img4 = cv2.drawMatches(bmap1, kp1, bmap2, kp2, new_matches[:], None, flags=2)
+       # img4 = cv2.drawMatches(bmap1, kp1, bmap2, kp2, new_matches[:], None, flags=2)
 
-      #  plt.imshow(img4),plt.show() 
         if new_matches == []:
             print('No matches were found between trace and retrace. Hysteresis correction cannot be carried out.')
             return trace, retrace, False
 
         print('Number of matches found for hysteresis correction:', len(new_matches), ". If it's only a few (less than ~3) the correction will not be very accurate.")
         
-        #calculate k3
+        # calculate k3
         ks = []
         for i in range(len(coord1s)):
             p_t = coord1s[i][0]
@@ -324,7 +323,6 @@ class STM(object):
        #     unproc_tracec = self.trace_down
             unproc_retrace = self.retrace_down.copy()
             unproc_retracec = self.retrace_down.copy()
-        #print(k3)
         for i in range(res):
             x_new = int(round(i - k3*np.sin(np.pi*i/res),0))
             for j in range(res):
@@ -339,7 +337,14 @@ class STM(object):
         return tracec, retracec, True
     
     def save_scan(self, scan, trace_or_retrace, file=False):
-        # trace_or_retrace should be one of the following ['trace up', 'retrace up', 'trace down', 'retrace down'] depending on what it is
+        '''
+        Saves the scan to a file as a numpy array.
+        Parameters:
+            scan (np.array): The scan to be saved.
+            trace_or_retrace (str): Whether the scan is a trace or retrace. Should be one of
+                                    ['trace up', 'retrace up', 'trace down', 'retrace down'].
+            file (str): The file path to save the scan to. If not specified, the scan will be saved in the same folder as the original file.
+        '''
         # save_to will be of the form 'Original file name'_trace_or_retrace.npy
         scan_name = self.file[:-7] + trace_or_retrace + '.npy'
         if file:
@@ -348,7 +353,47 @@ class STM(object):
             save_to = scan_name
         np.save(save_to, scan)
 
+    def _scan_line_align(self, scan):
+		proc = numpy.zeros(img.shape, dtype=numpy.float64)
+		proc[:,:] = img[:,:]
+		linep = proc[0]
+		for li in range(1,proc.shape[0]):
+			linen = proc[li]
+			delta = numpy.mean(linen - linep)
+			proc[li] -= delta
+			linep = linen
+
+		return proc    
+
+    def check_if_partial_scan(self, array):
+        '''
+        Checks if the scan is a partial scan. 
+        Assumes the scan is square. If it is not, then it is assumed to be a partial scan.
+        Parameters:
+            array (np.array): The scan to be checked.
+        Returns:
+            bool: Whether the scan is a partial scan.   
+        '''
+        if array.shape[0] == array.shape[1]:
+            return False
+        else:
+            return True
+
+
+
+
+    """
+    Finds lattice parameters using FFT but is not very accurate atm.
+    Then goes on to find the true area of the scan.
     def find_angle_lattice(self, up_down):
+        '''
+        Finds the lattice parameter and dimer row angle using an FFT.
+        If there's a step edge, it uses the two terraces to find the 2 lattice parameters and angle between them.
+        Otherwise, it takes an FFT of the empty state scan which is more likely to have atomic resolution.
+        Parameters:
+            up_down (str): Whether the scan is a trace up or trace down. Should be one of ['trace up', 'trace down'].
+        
+        '''
         # find the lattice parameter and dimer row angle using an FFT
         # if there's a step edge, it uses the two terraces to find the 2 lattice parameters and angle between them
         # otherwise, it takes an FFT of the empty state scan which is more likely to have atomic resolution.
@@ -447,10 +492,57 @@ class STM(object):
 
         print('The two lattice constants are' , lattice_const1, lattice_const2, ' pix.')
         print('The two angles are ', dimer_row_angle1*180/np.pi, dimer_row_angle2*180/np.pi)        
-
-    def check_if_partial_scan(self, array):
-        if array.shape[0] == array.shape[1]:
-            return False
-        else:
-            return True
+    def calc_true_area(self, up_down):
+        # w.l.o.g we can assume one side is x and the other y
+        # we use c^2 = a^2 + b^2 - 2ab*cos(theta)
+        
+        if up_down == 'trace up':
+            # trace up
+            a = self.trace_up_lat_param['lattice const 1']
+            a_theta = abs(self.trace_up_lat_param['angle 1'])
+            b = self.trace_up_lat_param['lattice const 2']
+            b_theta = abs(self.trace_up_lat_param['angle 2'])
+        if up_down == 'trace down':
+            # trace down
+            a = self.trace_down_lat_param['lattice const 1'] # this is 0.768nm
+            a_theta = abs(self.trace_down_lat_param['angle 1'])
+            b = self.trace_down_lat_param['lattice const 2'] # this is 0.768nm
+            b_theta = abs(self.trace_down_lat_param['angle 2'])
+        
+        
+        # decompose each into x and y components
+        a_x = a*np.sin(a_theta)
+        a_x_real = 0.768*np.sin(a_theta) # length of a_x in nm
+        a_y = a*np.cos(a_theta)
+        a_y_real = 0.768*np.cos(a_theta) # in nm
+        b_x = b*np.sin(b_theta)
+        b_x_real = 0.768*np.sin(b_theta) # in nm
+        b_y = b*np.cos(b_theta)
+        b_y_real = 0.768*np.cos(b_theta) # in nm
+        #print( 'ax' , a_x, 'ay', a_y, 'bx', b_x,'by', b_y, 'at', a_theta, 'bt', b_theta, 'axr', a_x_real, 'ayr', a_y_real, 'bxr', b_x_real, 'byr', b_y_real) # these thetas are larger
+        # take average of the two
+        c_x = 0.5 * (a_x + b_x)
+        c_x_real = 0.5 * (a_x_real + b_x_real)
+        c_y = 0.5 * (a_y + b_y)
+        c_y_real = 0.5 * (a_y_real + b_y_real)
+        # c_y and c_x are in pixels, but we know what each should correspond to in nm
+        pix_to_nm_ratio_x = c_x_real/c_x
+        pix_to_nm_ratio_y = c_y_real/c_y
+        # print('shape ', self.trace_up.shape)
+           
+        if up_down == 'trace up':
+            true_length_x = pix_to_nm_ratio_x * self.trace_up.shape[1]
+            true_length_y = pix_to_nm_ratio_y * self.trace_up.shape[0]
+          #  print('shape', self.trace_up.shape)
+            print('true lengths ', true_length_x, true_length_y, 'old length ', self.width)
+            area_up = true_length_x * true_length_y
+            self.true_area[0] = area_up
+        if up_down == 'trace down':
+            true_length_x = pix_to_nm_ratio_x * self.trace_down.shape[1]
+            true_length_y = pix_to_nm_ratio_y * self.trace_down.shape[0]
+           # print('shape', self.trace_down.shape)
+            print('true lengths ', true_length_x, true_length_y, 'old length ', self.width)
+            area_down = true_length_x * true_length_y
+            self.true_area[1] = area_down
+    """
 

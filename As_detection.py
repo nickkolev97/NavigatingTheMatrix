@@ -1,3 +1,4 @@
+
 from re import U
 import numpy as np
 from matplotlib import pyplot as plt
@@ -13,6 +14,7 @@ from scipy.ndimage import gaussian_filter
 from PIL import Image, ImageDraw, ImageFont
 import NavigatingTheMatrix as nvm
 import patchify as pat
+from pathlib import Path
 
 def load_model(model, file_path):
     model.load_state_dict(torch.load(file_path, map_location=torch.device('cpu') ) )
@@ -29,12 +31,14 @@ model4 = mo.Classifier(channels=2, crop_size=11, n_outputs=4, fc_layers=2, fc_no
 model5 = mo.Classifier(channels=2, crop_size=11, n_outputs=5, fc_layers=2, fc_nodes=100, dropout=0.2) # Arsine present
 
 # load models
-UNET1 = load_model(UNET1, r'C:\Users\nkolev\OneDrive - University College London\Documents\image processing\AsH3 identification\PyTorch versions\segmentors\UNet_bright_torch_patches.pth') # UNET finding bright features
-UNET2 = load_model(UNET2, r'C:\Users\nkolev\OneDrive - University College London\Documents\image processing\AsH3 identification\PyTorch versions\segmentors\UNet_DV_torch.pth') # UNET finding dark features/dimer vacancies
-UNET3 = load_model(UNET3, r'C:\Users\nkolev\OneDrive - University College London\Documents\image processing\AsH3 identification\PyTorch versions\segmentors\UNet_steps_torch.pth') # UNET finding step edges
-model4 = load_model(model4, r'C:\Users\nkolev\OneDrive - University College London\Documents\image processing\AsH3 identification\PyTorch versions\CNNs\Si(001)-H_classifier.pth') # 98% train acc, 91%test acc (1DB, 2DB, an, background)
-model5 = load_model(model5,r'C:\Users\nkolev\OneDrive - University College London\Documents\image processing\AsH3 identification\PyTorch versions\CNNs\Si(001)-H+AsH3_classifier.pth')  # 92% train acc, 90%test acc (1DB, 2DB, an, background, As)
+UNet1 = load_model(UNET1, Path.joinpath(cwd,'models', 'UNet_bright.pth') ) # UNET finding bright features
+UNet2 = load_model(UNET2, Path.joinpath(cwd,'models', 'UNet_DV.pth') ) # UNET finding dark features/dimer vacancies
+UNet3 = load_model(UNET3, Path.joinpath(cwd,'models', 'UNet_steps.pth') ) # UNET finding step edges
 
+model4 = load_model(model4, Path.joinpath(cwd,'models', 'Si(001)-H_classifier.pth') ) # 98% train acc, 91%test acc (1DB, 2DB, an, background)
+model5 = load_model(model5, Path.joinpath(cwd,'models', 'Si(001)-H+AsH3_classifier.pth') ) # 92% train acc, 90%test acc (1DB, 2DB, an, background, As)
+
+# set models to eval mode
 UNET1.eval()
 UNET2.eval()
 UNET3.eval()
@@ -63,33 +67,44 @@ class Feature(object):
 #############################################################################################
 # TODO: should probably integrate this into one with the navigating the matrix python code 
 
+def Si_Scan(object):
+    '''
+    Si scan object that contains all the information about the scan and the different features.
+    Contains filled and empty states but not trace up and trace down.
 
-class Scan(object):
-    # create a class for STM scans that has all the image detection methods built in
+    Attributes:
+        scan (npy array): The numpy array of filled and empty state scans of shape (res, res, 2)
+        trace (str): Trace up or trace down of scan. One of ['trace up', 'trace down']
+        mask_xxx: mask for the different features (1DB, 2DB, anomalies, As, close to DVs, etc)
+        feature_coords: dictionary with lists of coordinates of the different features
+        As: True if the scan is done after exposure to AsH3
+        num_features: number of features in the scan
+        features: dictionary with information about each feature in the scan.
+                  key = feature n: value = Feature instance
+        coords_probs_var: numpy array containing all coordinates of classified bright features 
+                           (i.e. not including the ones too close to DVs) and their 
+                           corresponding probability vectors.
+                           shape is (number of features, 5(6)) with the other 5(6) entries being
+                           the y coord, x coord, prob of 1DB, prob of 2DB, prob of anomaly 
+                           (,prob of As feature if present), var of prob1DB, var of prob2DB,
+                            var of prob An, (var of prob As) for that feature.
+        classes: number of classes in the classifier (4 if no As, 5 if As)
+        output: output from Detector object
+        rgb: rgb segmented image of the scan
+        res: resolution of the scan in pixels (assumes it's square)
 
-    def __init__(self, scan, up_down, As = True):
-        # up_down is either 'trace up' or 'trace down'
-        if up_down == 'trace up':
-            self.data = np.stack((scan.trace_up_proc, scan.retrace_up_proc), axis=2)
-            self.lattice_params = scan.trace_up_lat_param
-        if up_down == 'trace down':
-            self.data = np.stack((scan.trace_down_proc, scan.retrace_down_proc), axis=2)
-            self.lattice_params = scan.trace_down_lat_param
-        self.scan = scan
-        self.size = scan.width # height of scan in nm
-        self.res = self.data.shape[0]
-        self.crop_size = 6
-        self.As = As
-        self.name = scan.file
-        print('{} is file name'.format(self.name))
+        '''
 
-        # define the models
-        self.model_DB = model4  # model_DB should have 4 outputs (1DB, 2DB, anomaly, lattice)
-        self.model_As = model5  # model_As should have 5 outputs (1DB, 2DB, anomaly, lattice, As)
-        self.UNETbright = UNET1
-        self.UNETdark = UNET2
-        self.UNETstep = UNET3
-        # make masks for the different features
+    def __init__(self, SPMScan, trace, As = True):
+        
+        if trace == 'trace up':
+            self.scan = np.concatenate( [SPMScan.trace_up_proc, SPMScan.retrace_up_proc], axis=2 )
+        elif trace == 'trace down':
+            self.scan = np.concatenate( [SPMScan.trace_down_proc, SPMScan.retrace_down_proc], axis=2 )
+        
+        self.trace = trace
+        self.res = (self.data.shape)[0]
+
         self.mask_step_edges = None
         self.mask_DV = None
         self.mask_bright_features = None
@@ -97,38 +112,58 @@ class Scan(object):
         self.mask_2DB = np.zeros((self.res,self.res))
         self.mask_An = np.zeros((self.res,self.res))
         self.mask_CDV = np.zeros((self.res,self.res)) # features too close to DVs
-        self.num_features = None
-        if As: # true if the scan is done after exposure to AsH3 
+        if As:
             self.mask_As = np.zeros((self.res,self.res))
 
-        # make dictionary for the lists of coordinates of the different bright features
+        self.num_features = None
+        self.As = As
+        
         self.feature_coords = { 'oneDB':[],
                                 'twoDB':[],
                                 'anomalies': [],
                                 'closeToDV':[],
                                 'As': []}
-        # dictionary that contains information about each feature in the scan
-        # key = feature n: value = Feature instance 
+
         self.features = {}
-        # numpy array containing all coordinates of classified bright features (i.e. not including the ones too close to DVs) and their corresponding probability vectors
-        # shape is (number of features, 5(6)) with the other 5(6) entries being the y coord, x coord, prob of 1DB, prob of 2DB, prob of anomaly (,prob of As feature if present),
-        # var of prob1DB, var of prob2DB, var of prob An, (var of prob As) for that feature
+
         if As:
             self.coords_probs_vars = np.zeros( (1,10) )
             self.classes = 5
-        if not As:
+        else:
             self.coords_probs_vars = np.zeros( (1,8) )
             self.classes = 4
 
         print('Resolution of image is '+str(self.res))
-        self.output = self.predict(self.data, UNET1, UNET2, UNET3, As, self.res, 32)
-        self.rgb = self.turn_rgb(self.output[1])
+        self.output = None
+        self.rgb = None
 
         # get rid of initial row of zeros in self.coords_probs
         self.coords_probs_vars = self.coords_probs_vars[1:,:]
 
-    # normalisation for window categorisation (recentre around mean)
+
+class Detector(object):
+    '''
+    Detector object that finds/classifies the different features in a scan.
+    Attributes:
+        crop_size (int): half the size of the crops that are fed into the classifier
+        
+    '''
+
+    def __init__(self):
+        self.crop_size = 6
+        
+        # define the models
+
+        self.model_DB = model4  # model_DB should have 4 outputs (1DB, 2DB, anomaly, lattice)
+        self.model_As = model5  # model_As should have 5 outputs (1DB, 2DB, anomaly, lattice, As)
+        self.UNETbright = UNET1
+        self.UNETdark = UNET2
+        self.UNETstep = UNET3
+    
     def norm1(self, array):
+        '''
+        recentre mean to 0. Used for the window classifiers
+        '''
         if len(array.shape)==4:
             mean_f = np.expand_dims(np.mean(array[:,0,:,:] , axis=(1,2) ), axis=(1,2) )
             mean_e = np.expand_dims(np.mean(array[:,1,:,:] , axis=(1,2) ), axis=(1,2) )
@@ -139,21 +174,10 @@ class Scan(object):
             array = array - mean_f
         return array
     
-    # max/min norm for crops
-    def norm3(self, array):
-        #max/min normalisation
-        max_f = np.expand_dims(np.max(array[:,:,:,0], axis=(1,2)), axis=(1,2))
-        min_f = np.expand_dims(np.min(array[:,:,:,0], axis=(1,2)), axis=(1,2))
-        max_e = np.expand_dims(np.max(array[:,:,:,1], axis=(1,2)), axis=(1,2))
-        min_e = np.expand_dims(np.min(array[:,:,:,1], axis=(1,2)), axis=(1,2))
-        array[:,:,:,0] = (array[:,:,:,0]-min_f)/(max_f-min_f)
-        array[:,:,:,1] = (array[:,:,:,1]-min_e)/(max_e-min_e)
-        return array
-
-    # normalisation for unets (min/max)
     def norm2(self, array):
         '''
-        Max/min normalisation for torch tensors
+        Max/min normalisation for torch tensors.
+        Used for the unets
         Args
             array: torch tensor of shape  (n , 1, win_size,win_size), n is number of crops
         
@@ -166,9 +190,33 @@ class Scan(object):
         array = (array[:,0,:,:]-min_filled)/(max_filled-min_filled)
 
         return array.unsqueeze(1)
+        
+    def norm3(self, array):
+        '''
+        max/min normalisation for numpy arrays
+        '''
+        max_f = np.expand_dims(np.max(array[:,:,:,0], axis=(1,2)), axis=(1,2))
+        min_f = np.expand_dims(np.min(array[:,:,:,0], axis=(1,2)), axis=(1,2))
+        max_e = np.expand_dims(np.max(array[:,:,:,1], axis=(1,2)), axis=(1,2))
+        min_e = np.expand_dims(np.min(array[:,:,:,1], axis=(1,2)), axis=(1,2))
+        array[:,:,:,0] = (array[:,:,:,0]-min_f)/(max_f-min_f)
+        array[:,:,:,1] = (array[:,:,:,1]-min_e)/(max_e-min_e)
+        return array
 
-    # takes in the different output maps and turns them into a single output
-    def make_output(self, output_b, output_dv, output_se, res, radius=4):
+
+    def make_output(self, output_b, output_dv, output_se, res):
+        '''
+        Takes in the different output maps and turns them into a single output
+        parameters:
+            output_b: output from bright feature detector
+            output_dv: output from dark feature detector
+            output_se: output from step edge detector
+            res: resolution of the scan in pixels
+        output:
+            output: numpy array of shape (res, res, 4) with the different features labelled
+
+        '''
+
         output = np.stack((output_b, output_se, output_dv), axis=2)
         summed = np.sum(output, axis=2) #sum to make into a 2D pic with 1 channel and then check where sum is larger than 2 
         for i in range(res):
@@ -196,21 +244,34 @@ class Scan(object):
     '''
 
     def recentre(self, crop, scan, coordinate, min_border, max_border):
-        # find the brightest pixel in the crop 
-        # since bright pixels near the edge are probably from a nearby defects, we use an array that has
-        # zeros for the elements on the border
-       
-       # print('init crop and centre', coordinate)
-       # plt.imshow(crop), plt.show()
+        '''
+        find the brightest pixel in the crop. Since bright pixels near 
+        the edge are probably from a nearby defects, we use an array that has
+        zeros for the elements on the border.
+
+        Args:
+            crop: the crop that we want to recentre
+            scan: the scan that the crop is from
+            coordinate: the coordinate of the centre of the crop
+            min_border: the minimum distance from the edge that we want to look for the brightest pixel
+            max_border: the maximum distance from the edge that we want to look for the brightest pixel
+        
+        Returns:
+            crop: the recentred crop
+            bp: the brightest pixel in the crop
+            new_centre: the new centre of the crop
+        '''
        
         cropc = np.zeros((2*self.crop_size-1,2*self.crop_size-1))
         cropc[min_border:max_border,min_border:max_border] += crop[min_border:max_border,min_border:max_border].copy()
+        
         # max/min normalise (we look for brightest pixel so have to make sure that it's not going to be the zero border)
         cropc[min_border:max_border,min_border:max_border] = (cropc[min_border:max_border,min_border:max_border]-np.min(cropc[min_border:max_border,min_border:max_border]))/(np.max(cropc[min_border:max_border,min_border:max_border])-np.min(cropc[min_border:max_border,min_border:max_border]))
         brightest_pix = np.unravel_index( np.argmax(cropc), (2*self.crop_size-1,2*self.crop_size-1) )
+        
         # redefine scan so the brightest pixel is the centre
         new_centre = coordinate.copy() - self.crop_size + [1,1] + np.array(brightest_pix)
-        #print('new centre', new_centre)
+        
         y, x = new_centre
         if (new_centre != coordinate).any:
             # only redefine the crop if the centre has actually been moved
@@ -220,10 +281,21 @@ class Scan(object):
             else:
                 crop = scan[ int(y-self.crop_size):int(y+self.crop_size), int(x-self.crop_size):int(x+self.crop_size)].copy()
                 bp = np.unravel_index( np.argmax(crop), (2*self.crop_size,2*self.crop_size) )
-       # plt.imshow(crop), plt.show()
+       
         return crop, bp, new_centre
 
-    def finder(self, scan, segmented, radius = 3):
+    def finder(self, scan, segmented):
+        '''
+        Finds the coordinates of the different features in the scan and also
+        classifies them. It also updates the corresponding masks for each feature.
+       
+        Args:
+            scan: the scan that we want to find features in
+            segmented: the segmented image of the scan
+        
+        Returns:
+            None
+            '''
         # array is the input array consisting of the topography in filled and empty
         # segmented is the output from the UNET
         
@@ -314,11 +386,13 @@ class Scan(object):
     
         
     def label_feature(self, scan, scan_filled, scan_empty, coord, DVcoords):
-        # scan should be the padded version of the actual scan (with both filled and empty)
-        # scan_filled/empty are also padded
-        # DVcoords is an array of all the DV coords
+        '''
+        Labels features based on the probability vectors from the classifier.
 
-        res = self.res
+        Args:
+            scan (npy array): Si(001) scan. 
+        '''
+        res = scan.res
         # for each feature coord, find distance from the DVs
         min_dist = (3/512)*res
         
