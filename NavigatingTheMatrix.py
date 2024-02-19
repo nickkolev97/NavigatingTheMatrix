@@ -1,6 +1,5 @@
 from functools import reduce
 import numpy as np
-from detector import * # should maybe just add this to this file as I'm only using one function from this
 import matplotlib.pyplot as plt
 import os
 import scipy
@@ -84,8 +83,6 @@ class STM(object):
         self.x_offset = x_offset
         self.angle = angle
 
-        # create instance of detector class that does the image cleanup
-        self.scanner = Detector()
 
         '''
         Working progress on trying to get the true area of the scan by using FFTs to find lattice parameters.
@@ -354,16 +351,16 @@ class STM(object):
         np.save(save_to, scan)
 
     def _scan_line_align(self, scan):
-		proc = numpy.zeros(img.shape, dtype=numpy.float64)
-		proc[:,:] = img[:,:]
-		linep = proc[0]
-		for li in range(1,proc.shape[0]):
-			linen = proc[li]
-			delta = numpy.mean(linen - linep)
-			proc[li] -= delta
-			linep = linen
+        proc = np.zeros(scan.shape, dtype=np.float64)
+        proc[:,:] = scan[:,:]
+        linep = proc[0]
+        for li in range(1,proc.shape[0]):
+            linen = proc[li]
+            delta = np.mean(linen - linep)
+            proc[li] -= delta
+            linep = linen
 
-		return proc    
+        return proc    
 
     def check_if_partial_scan(self, array):
         '''

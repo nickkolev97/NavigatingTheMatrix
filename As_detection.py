@@ -6,7 +6,6 @@ import matplotlib.patches as patches
 import cv2, argparse
 import torch
 import models as mo
-from scanner import SPM
 from skimage.transform import probabilistic_hough_line, hough_line, hough_line_peaks
 from skimage.feature import canny
 from scipy import stats
@@ -15,6 +14,9 @@ from PIL import Image, ImageDraw, ImageFont
 import NavigatingTheMatrix as nvm
 import patchify as pat
 from pathlib import Path
+
+# debugging module
+from icecream import ic
 
 def load_model(model, file_path):
     model.load_state_dict(torch.load(file_path, map_location=torch.device('cpu') ) )
@@ -31,6 +33,7 @@ model4 = mo.Classifier(channels=2, crop_size=11, n_outputs=4, fc_layers=2, fc_no
 model5 = mo.Classifier(channels=2, crop_size=11, n_outputs=5, fc_layers=2, fc_nodes=100, dropout=0.2) # Arsine present
 
 # load models
+cwd = Path.cwd() # get current working directory
 UNet1 = load_model(UNET1, Path.joinpath(cwd,'models', 'UNet_bright.pth') ) # UNET finding bright features
 UNet2 = load_model(UNET2, Path.joinpath(cwd,'models', 'UNet_DV.pth') ) # UNET finding dark features/dimer vacancies
 UNet3 = load_model(UNET3, Path.joinpath(cwd,'models', 'UNet_steps.pth') ) # UNET finding step edges
@@ -58,10 +61,9 @@ class Feature(object):
 
         # dictionary with distances to other features on the scan
         # in future, this can be expanded to include the scan the feature is on as well
-        # key = feature: value = distance in nm
+        # key = feature, value = distance in nm
         self.distances = {}
-
-
+    
 #############################################################################################
 #### Scan object that has the ML in it and finds/classifies the different features ##########
 #############################################################################################
@@ -73,7 +75,7 @@ class Si_Scan(object):
     Contains filled and empty states but not trace up and trace down.
 
     Attributes:
-        scan (npy array): The numpy array of filled and empty state scans of shape (res, res, 2)
+        scan (STM): STM object containing fwds and bwds, up and down scans and other metainfo.
         trace (str): Trace up or trace down of scan. One of ['trace up', 'trace down']
         mask_xxx: mask for the different features (1DB, 2DB, anomalies, As, close to DVs, etc)
         feature_coords: dictionary with lists of coordinates of the different features
@@ -95,15 +97,15 @@ class Si_Scan(object):
 
         '''
 
-    def __init__(self, SPMScan, trace, As = True):
-        
+    def __init__(self, STMScan, trace, As = True):
         if trace == 'trace up':
-            self.scan = np.concatenate( [SPMScan.trace_up_proc, SPMScan.retrace_up_proc], axis=2 )
+            self.scan = np.stack( [STMScan.trace_up_proc, STMScan.retrace_up_proc], axis=-1)
         elif trace == 'trace down':
-            self.scan = np.concatenate( [SPMScan.trace_down_proc, SPMScan.retrace_down_proc], axis=2 )
-        
+            self.scan = np.stack( [STMScan.trace_down_proc, STMScan.retrace_down_proc], axis=-1 )
+    
         self.trace = trace
-        self.res = (self.data.shape)[0]
+        self.res = (self.scan.shape)[0]
+        self.size = STMScan.size[0] # assume height=width
 
         self.mask_step_edges = None
         self.mask_DV = None
@@ -134,11 +136,127 @@ class Si_Scan(object):
             self.classes = 4
 
         print('Resolution of image is '+str(self.res))
-        self.output = None
+        self.one_hot_segmented = None
         self.rgb = None
 
         # get rid of initial row of zeros in self.coords_probs
         self.coords_probs_vars = self.coords_probs_vars[1:,:]
+
+    def feature_dists(self):
+        """
+        For every feature on the scan it finds the distance between it and every other feature.
+        It stored this in a dictionary of that feature (feature.distances) where the keys
+        are the feature instances and the values are the distances between the two features.
+
+        Args:
+            Self.
+
+        Returns:
+            None
+        
+        """
+
+        for feature1 in self.features.values():
+            if feature1.feature_type != 'anomalies' and feature1.feature_type != 'closeToDV':
+                for feature2 in self.features.values():
+                    if feature2.feature_type != 'anomalies' and feature2.feature_type != 'closeToDV':
+                        if feature1!=feature2:
+                            #ic(feature1.coord, feature2.coord)
+                            dist = np.sqrt(np.sum( (feature2.coord-feature1.coord)**2 ) )*self.size/self.res
+                            #ic(dist)
+                            feature1.distances[feature2] = dist
+        
+        return 
+    
+    def find_pairs(self, feature1_type, feature2_type, max_dist):
+        '''
+        finds pairs of features that are a certain distance from each other
+        it also produces an image of the feature pairs labelled
+        
+        Args:
+            max_dist: the maximum wanted distance between two features (in nm)
+            feature1_type and feature2_type: the types of feature. One of 'oneDB', 'twoDB', 'anomalies', 'As'
+        
+        Returns:
+            Dictionary with number of feature pair as key and feature pair as value (where a feature is a feature
+            object from this .py doc).
+
+        '''
+
+        feature_pairs_dict = {}
+        i = 0
+        for feature1 in self.features.values():
+            if feature1.feature_type == feature1_type:
+                for feature2 in self.features.values():
+                    if feature1!=feature2 and [feature2, feature1] not in feature_pairs_dict.values():
+                        if feature2.feature_type == feature2_type:
+                            distance = feature1.distances[feature2]
+                           # ic(distance, max_dist)
+                            if distance <=max_dist:
+                                feature_pairs_dict[i] = [feature1, feature2]
+                                i += 1
+
+        self.label_pairs(feature_pairs_dict, feature1_type, feature2_type, max_dist)
+
+        return feature_pairs_dict
+
+    def label_pairs(self, dict_pairs, feature1, feature2, max_dist):
+        """
+        Produces a labelled image of the pairs of features
+        We draw on the image using PIL
+        
+        Args:
+            dict_pairs: dictionary with keys as the pair number, and values as the feature
+                        pairs (where a feature is an instance of a feature object from this .py doc)
+            feature1: the types of feature. One of oneDB', 'twoDB', 'anomalies', 'As'
+            feature2: the types of feature. One of oneDB', 'twoDB', 'anomalies', 'As'
+
+        Returns:
+            Nothing
+        """
+
+        # Prepare to draw on the image
+        scan_c = self.scan.copy()
+        
+        # Create a figure and axis
+        fig, ax = plt.subplots()
+        ax.imshow(scan_c[:,:,0], cmap='afmhot')
+
+       # plt.imshow(scan_c[:,:,0])
+        for i, pair in enumerate(dict_pairs.values()):
+            # Draw on the image
+            centre_coord = (pair[0].coord+pair[1].coord)/2
+            y1, x1 = pair[0].coord
+            y2, x2 = pair[1].coord
+            # Draw the text on the image
+            ax.text(centre_coord[1], centre_coord[0], '{}, {}nm'.format(str(i), str(round(pair[0].distances[pair[1]],1)) ), fontdict={'color': 'blue'}) 
+           # draw.text(centre_coord, str(i), fill="blue")
+            radius = 6/512 * self.res
+            
+            # draw line from first feature to second
+            plt.plot([x1,x2], [y1,y2], color="white", linewidth=1) 
+
+            
+        #plt.savefig(scan_c, '{}_labelled_pairs_of_{}_{}'.format(self.scan, feature1, feature2))
+        plt.title('{} and {} pairs closer than {}nm'.format(feature1, feature2, max_dist))
+        plt.show()
+        
+        return
+
+    def oneDhistogram(self, distances, edge, dr, density):
+        nbins = edge//dr
+        histogram = np.histogram(distances, bins = nbins)
+        # normalise 
+        histogram[0][0] = 0 # the pixels right next to feature are due to itself which we don't count
+        for i in range(nbins):
+            j = i+1
+            normalisation = np.pi*(dr*j)*dr * density
+            histogram[0][j] = histogram/normalisation
+
+        return histogram
+
+
+
 
 
 class Detector(object):
@@ -148,8 +266,8 @@ class Detector(object):
         crop_size (int): half the size of the crops that are fed into the classifier
         
     '''
-
     def __init__(self):
+        
         self.crop_size = 6
         
         # define the models
@@ -202,7 +320,6 @@ class Detector(object):
         array[:,:,:,0] = (array[:,:,:,0]-min_f)/(max_f-min_f)
         array[:,:,:,1] = (array[:,:,:,1]-min_e)/(max_e-min_e)
         return array
-
 
     def make_output(self, output_b, output_dv, output_se, res):
         '''
@@ -281,10 +398,10 @@ class Detector(object):
             else:
                 crop = scan[ int(y-self.crop_size):int(y+self.crop_size), int(x-self.crop_size):int(x+self.crop_size)].copy()
                 bp = np.unravel_index( np.argmax(crop), (2*self.crop_size,2*self.crop_size) )
-       
+        
         return crop, bp, new_centre
 
-    def finder(self, scan, segmented):
+    def finder(self, si_scan, radius=3):
         '''
         Finds the coordinates of the different features in the scan and also
         classifies them. It also updates the corresponding masks for each feature.
@@ -300,26 +417,26 @@ class Detector(object):
         # segmented is the output from the UNET
         
         # make everything in array non-negative. Needed for when finding features later
+        scan = si_scan.scan.copy()
         scanc = scan-np.min(scan)
+        
+        scan_filled = np.pad(scanc[:,:,0].copy(), pad_width = 2*self.crop_size, mode = 'reflect')
+        scan_empty = np.pad(scanc[:,:,1].copy(), pad_width = 2*self.crop_size, mode = 'reflect')
+        
+        segmented =  (si_scan.mask_bright_features).astype(np.uint8)
 
         area_per_feature = np.pi*radius**2
-        features = [] # list to be filled with coordinates of the features
-        res = scan.shape[0]
+        res = si_scan.res
 
+        # find number of features in scan
         connected_comps = cv2.connectedComponentsWithStats( segmented )
         (numLabels, labels, stats, centroids) = connected_comps
 
-        # loop over the number of unique connected component labels
-        # for each component, we take a crop around its highest pixel (to standardise input)
-        # and then categorise it. We use a padded version of the scans (so that we don't get
-        # size errors when cropping)
-        scan_filled = np.pad(scan[:,:,0].copy(), pad_width = 2*self.crop_size, mode = 'reflect')
-        scan_empty = np.pad(scan[:,:,1].copy(), pad_width = 2*self.crop_size, mode = 'reflect')
-        scan_c = np.stack((scan_filled, scan_empty), axis=2)
+    
         # we also don't want to use any coordinates that are too close to a DV 
         # (the way the feature looks can be very different so we avoid categorising it for now)
         # get coordinates of every pixel belonging to DV
-        DVcoords = np.where(self.mask_DV==True)
+        DVcoords = np.where(si_scan.mask_DV==True)
         DVcoords = np.array([DVcoords[0],DVcoords[1]])
 
         print('Number of features is', numLabels)
@@ -340,7 +457,7 @@ class Detector(object):
                 if num_features>3:
                 # if the area is above some threshold (3*pi*r^2) then we say that it's an anomaly
                 # (could be a contaminant, could be a large cluster of DBs) and don't bother trying to categorise it
-                    self.mask_An[labels == i] = 1
+                    si_scan.mask_An[labels == i] = 1
                 
                 else:
                     # now make a temporary array to look at what is the scan but only non-zero where this label is
@@ -349,53 +466,55 @@ class Detector(object):
                     
                     coord = np.array(np.unravel_index(temp_array.argmax(), temp_array.shape))
                     temp_features.append(coord)
-                    features += temp_features
+                   # features += temp_features ?
 
                     # now find what feature it is
-                    y, prediction, coord = self.label_feature(scan_c, scan_filled, scan_empty, coord, DVcoords)#, var
+                    y, prediction, coord = self.label_feature(si_scan, scan_filled, scan_empty, coord, DVcoords)
                     coord = np.expand_dims(coord, axis=0) 
-                    # y is the probability vector, var is the var vector for each of the probabilities
-                    # save this to self.coord_probs_vars
-                   # if prediction !=8:
-                        #self.coords_probs_vars = np.concatenate( (self.coords_probs_vars, np.concatenate( (coord, y, var), axis=1 ) ), axis=0)
-                   #     self.coords_probs_vars = np.concatenate( (self.coords_probs_vars, np.concatenate( (coord, y.detach().numpy()), axis=1 ) ), axis=0)
-                    # update the corresponding mask for that feature
+                   # update the corresponding mask for that feature
                     
                     if prediction == 1:
-                        self.mask_1DB += labels==i
+                        si_scan.mask_1DB += labels==i
                     elif prediction == 2:
-                        self.mask_2DB += labels==i
+                        si_scan.mask_2DB += labels==i
                     elif prediction == 3:
-                        self.mask_An += labels==i
+                        si_scan.mask_An += labels==i
                     elif prediction == 5:
-                        self.mask_As += labels==i
+                        si_scan.mask_As += labels==i
                     elif prediction == 8:
-                        self.mask_CDV += labels==i
+                        si_scan.mask_CDV += labels==i
 
                     
                     
                     ## TODO: NEED TO THINK ABOUT HOW TO DEAL WITH THIS. MAKE THE STEP EDGE DETECTOR MORE ROBUST? KEEP IT LIKE THIS THEN FILTER OUT THE SMALL STEPS AGAIN?
                     #elif prediction == 6:
-                    #    self.mask_step_edges[labels==i] = 1
+                    #    si_scan.mask_step_edges[labels==i] = 1
                     #    plt.figure(figsize=(10,10))
-                    #    plt.imshow(self.mask_step_edges)
+                    #    plt.imshow(si_scan.mask_step_edges)
                     #    plt.show()
 
                     #if unsure:
                     #    self.unsure.append(coord)
-    
-        
-    def label_feature(self, scan, scan_filled, scan_empty, coord, DVcoords):
+       
+    def label_feature(self, si_scan, scan_filled, scan_empty, coord, DVcoords):
         '''
         Labels features based on the probability vectors from the classifier.
 
         Args:
             scan (npy array): Si(001) scan. 
+            scan_filled (npy array): filled state of the scan
+            scan_empty (npy array): empty state of the scan
+            coord (list of floats): coordinate of the feature
+            DVcoords (npy array): coordinates of the DVs in the scan
         '''
-        res = scan.res
+
+        res = si_scan.res
         # for each feature coord, find distance from the DVs
         min_dist = (3/512)*res
         
+        scan = np.stack((scan_filled, scan_empty), axis=2)
+       
+
         y, x = coord.copy()+2*self.crop_size # add crop_size since we padded the array
         
         if self.crop_size%2 == 0:
@@ -403,31 +522,26 @@ class Detector(object):
         else:
             window = np.expand_dims(scan[y-self.crop_size:y+self.crop_size, x-self.crop_size:x+self.crop_size,:], axis=(0) ).copy()
         
-       # plt.imshow(window[0,:,:,0]), plt.show()
 
         # training data was standardised so that each bright feature was centered on 
         # brightest pixel (separately for filled and empty states).
         # Must do the same for real data. We do so iteratively (recentre twice at most)
         if (coord>res-self.crop_size).any() or (coord<self.crop_size).any():
             # if the feature is very near the border, we only recentre once
-            window[0,:,:,0], bp1, coord_f = self.recentre(window[0,:,:,0], scan_filled.copy(), coord.copy()+2*self.crop_size, min_border=2, max_border=8)
-            window[0,:,:,1], bp2, coord_e = self.recentre(window[0,:,:,1], scan_empty.copy(), coord.copy()+2*self.crop_size, min_border=2, max_border=8)
+            window[0,:,:,0], bp1, coord_f = self.recentre(window[0,:,:,0], scan_filled, coord.copy()+2*self.crop_size, min_border=2, max_border=8)
+            window[0,:,:,1], bp2, coord_e = self.recentre(window[0,:,:,1], scan_empty, coord.copy()+2*self.crop_size, min_border=2, max_border=8)
         else:
-            window[0,:,:,0], bp1, coord_f = self.recentre(window[0,:,:,0], scan_filled.copy(), coord.copy()+2*self.crop_size, min_border=2, max_border=8)
+            window[0,:,:,0], bp1, coord_f = self.recentre(window[0,:,:,0], scan_filled, coord.copy()+2*self.crop_size, min_border=2, max_border=8)
             if bp1!=(5,5):
-                window[0,:,:,0], bp1, coord_f = self.recentre(window[0,:,:,0], scan_filled.copy(), coord_f, min_border=3, max_border=7)    
+                window[0,:,:,0], bp1, coord_f = self.recentre(window[0,:,:,0], scan_filled, coord_f, min_border=3, max_border=7)    
             # Now recentre the empty state scans
-            window[0,:,:,1], bp2, coord_e = self.recentre(window[0,:,:,1], scan_empty.copy(), coord.copy()+2*self.crop_size, min_border=2, max_border=8)
-           # print(coord_e)
+            window[0,:,:,1], bp2, coord_e = self.recentre(window[0,:,:,1], scan_empty, coord.copy()+2*self.crop_size, min_border=2, max_border=8)
             if bp2!=(5,5):
-                window[0,:,:,1], bp2, coord_e = self.recentre(window[0,:,:,1], scan_empty.copy(), coord_e, min_border=3, max_border=7)
-                #print(coord_e)
-         
-      #  plt.imshow(window[0,:,:,0]), plt.show()   
+                window[0,:,:,1], bp2, coord_e = self.recentre(window[0,:,:,1], scan_empty, coord_e, min_border=3, max_border=7)
+            
         coord =  coord_f.copy() - self.crop_size
 
         distances = np.sqrt(np.sum((coord-self.crop_size-DVcoords.T)**2, axis=1))
-
 
         if (distances>min_dist).all():
             window = np.transpose(window, (0,3,1,2))
@@ -436,90 +550,67 @@ class Detector(object):
             
             self.windows.append(window)
 
-            if self.As:
+            if si_scan.As:
                # for ensemble model
-               # _,_, y, var = self.model_As(torch.tensor(window).float())
                 torch.manual_seed(0)
                 y = self.model_As(torch.tensor(window).float())
-            elif not self.As:
-                #_,_, y, var = self.model_DB(torch.tensor(window).float())        
+            elif not si_scan.As:     
                 torch.manual_seed(0)
                 y = self.model_DB(torch.tensor(window).float())
-            #print('full prediction ' , y, var)
             prediction = torch.argmax(y)+1
-           # print(prediction)
-           # print(prediction)
-          #  print('final predction ', prediction)
-            #print(prediction, coord)
             if prediction == 1:
-                self.feature_coords['oneDB'].append(coord-self.crop_size)
+                si_scan.feature_coords['oneDB'].append(coord-self.crop_size)
             elif prediction == 2:
-                self.feature_coords['twoDB'].append(coord-self.crop_size)
+                si_scan.feature_coords['twoDB'].append(coord-self.crop_size)
             elif prediction == 3:
-                self.feature_coords['anomalies'].append(coord-self.crop_size)
+                si_scan.feature_coords['anomalies'].append(coord-self.crop_size)
             #elif prediction==4 it's lattice (i.e UNet probably made wrong prediction)
             elif prediction == 5:
-                self.feature_coords['As'].append(coord-self.crop_size) 
-           
-            #if probability<0.7:
-            #    unsure = True
-                
+                si_scan.feature_coords['As'].append(coord-self.crop_size)      
 
         else:
-            self.feature_coords['closeToDV'].append(coord-self.crop_size)
+            si_scan.feature_coords['closeToDV'].append(coord-self.crop_size)
             prediction = 8 
-            y, var = [0,0]
+            
+        return y, prediction, coord-self.crop_size
 
-        return y, prediction, coord-self.crop_size#, var,
+    def predict(self, si_scan, As, win_size=32):
+        '''
+        Outputs a fully segmented image of the scan.
 
-    def predict(self, array, UNET1, UNET2, UNET3, As, res, win_size=32):
-    # takes in an array of shape (2^n,2^n,2) and outputs the feature map and location of bright features.
-    # 'As' variable is either True or False. It should be True if the scan is expected to contain As features.
-
-        ###########
-        #########
-        ##########
+        Args:
+            si_scan (Si_scan): Si_scan object to run prediction on
+            As (bool): True if the scan is expected to contain As features.
+            win_size (int): size of the crops that are fed into the UNets
+        Returns:
+            output (npy): numpy array of shape (res,res,4) with the different features labelled
+        '''
+        
         self.windows = []
-        #########
-        #
-        #
+        res = si_scan.res
+        array = si_scan.scan[:,:,0].copy()
 
-        # normalise
         dim = int(res//win_size)
-        array2 = array[:,:,0].copy()
         # max/min normalise
-        array2 = (array2-np.min(array2))/(np.max(array2)-np.min(array2))
+        array = (array-np.min(array))/(np.max(array)-np.min(array))
         sqrt_num_patches = ((res-win_size)//(win_size//2)+1)
-
-        # patches for bright features
-        patches1 = np.reshape( pat.patchify(array2, (win_size, win_size), step = win_size//2), ( ( sqrt_num_patches**2 , 1, win_size,win_size) ) )
+        # patches for UNets
+        patches1 = np.reshape( pat.patchify(array, (win_size, win_size), step = win_size//2), ( ( sqrt_num_patches**2 , 1, win_size,win_size) ) )
         # normalise and turn to tensor
         patches1 = self.norm2(torch.tensor(patches1).float())
-        
 
         # find bright features
         torch.manual_seed(0)
-        unet_prediction1 = self.UNETbright(patches1)
-        unet_prediction1 = torch.reshape(unet_prediction1, (sqrt_num_patches, sqrt_num_patches, 2, 1, 32, 32))
-        prediction1 = torch.zeros((2,res,res))
-        # To get rid of edge effects of the U-Net, we take smaller steps so each crop overlaps and then take an average over the crops
-        # takes a bit longer to compute but is more accurate
-        for i in range(sqrt_num_patches):
-            for j in range(sqrt_num_patches):
-                prediction1[:,i*16:(i*16)+32, j*16:(j*16)+32] = prediction1[:,i*16:(i*16)+32, j*16:(j*16)+32] + unet_prediction1[i,j,:,0,:,:]     
-        unet_prediction1 = torch.argmax(prediction1,dim=0)
-        self.mask_bright_features = unet_prediction1.detach().numpy()
-        
+        si_scan.mask_bright_features = self.UNET_predict(patches1, self.UNETbright, sqrt_num_patches, res)
+                
         # find dark features
         torch.manual_seed(0)
-        unet_prediction2 = self.UNETdark(torch.tensor(array2).unsqueeze(0).unsqueeze(0).float())
-        self.mask_DV = torch.argmax(unet_prediction2[0,:,:,:],dim=0).detach().numpy()
-
+        si_scan.mask_DV = self.UNET_predict(patches1, self.UNETdark, sqrt_num_patches, res)
+    
         # find step edges
         torch.manual_seed(0)
-        unet_prediction3 = self.UNETstep(torch.tensor(array2).unsqueeze(0).unsqueeze(0).float())
-        unet_prediction3 = torch.argmax(unet_prediction3[0,:,:,:], dim=0).detach().numpy()
-       
+        unet_prediction3 = self.UNET_predict(patches1, self.UNETstep, sqrt_num_patches, res)
+
         # get rid of any step edges that that are small since these probably aren't step edges
         connected_comps = cv2.connectedComponentsWithStats(unet_prediction3.astype(np.uint8))#, args["connectivity"], cv2.CV_32S)
         (numLabels, labels, stats, centroids) = connected_comps
@@ -533,63 +624,96 @@ class Detector(object):
                 if area<(0.0004*res**2):
                     unet_prediction3[labels == i] = 0 
 
-        self.mask_step_edges = unet_prediction3
+        si_scan.mask_step_edges = unet_prediction3
         
         
        # print('bright features')
-       # plt.imshow(self.mask_bright_features)
+       # plt.imshow(si_scan.mask_bright_features)
        # plt.show()
        # print('dark features')
-       # plt.imshow(self.mask_DV)
+       # plt.imshow(si_scan.mask_DV)
        # plt.show()  
        # print('step edges')
-       # plt.imshow(self.mask_step_edges)
+       # plt.imshow(si_scan.mask_step_edges)
        # plt.show()
         
 
         # get coordinates for the bright spots and also their labels (they're just numbered from 1 upwards)
-        # inoformation is stored in self.mask_... and self.coords
-        self.finder(array, (self.mask_bright_features).astype(np.uint8))
+        # inoformation is stored in si_scan.mask_... and self.coords
+        self.finder(si_scan)
 
         # combine these three maps to get a single output
-        output = self.make_output(self.mask_bright_features, self.mask_DV, self.mask_step_edges, res , radius=4)
+        output = self.make_output(si_scan.mask_bright_features, si_scan.mask_DV, si_scan.mask_step_edges, res )
         # order of output is background, bright, dv,step edge
 
         # combine them all into the one tensor
         if As:
-            output2 = np.stack((0.8*output[:,:,0], output[:,:,2], output[:,:,3], self.mask_1DB, self.mask_2DB, self.mask_An, self.mask_CDV, self.mask_As ), axis=2)
+            output2 = np.stack((0.8*output[:,:,0], output[:,:,2], output[:,:,3], si_scan.mask_1DB, si_scan.mask_2DB, si_scan.mask_An, si_scan.mask_CDV, si_scan.mask_As ), axis=2)
         else:
-            output2 = np.stack((0.8*output[:,:,0], output[:,:,2], output[:,:,3], self.mask_1DB, self.mask_2DB, self.mask_An, self.mask_CDV), axis=2)
+            output2 = np.stack((0.8*output[:,:,0], output[:,:,2], output[:,:,3], si_scan.mask_1DB, si_scan.mask_2DB, si_scan.mask_An, si_scan.mask_CDV), axis=2)
         # order of output2: background, step edges, dv, 1DB, 2DB, anomalies, CDV,  As features (if present)
         
       #  print('1DB')
-      #  plt.imshow(self.mask_1DB)
+      #  plt.imshow(si_scan.mask_1DB)
       #  plt.show()
       #  print('2DB')
-      #  plt.imshow(self.mask_2DB)
+      #  plt.imshow(si_scan.mask_2DB)
       #  plt.show()
       #  print('anomalies')
-      #  plt.imshow(self.mask_An)
+      #  plt.imshow(si_scan.mask_An)
       #  plt.show()
       #  if As:
       #      print('As features')
-      #      plt.imshow(self.mask_As)
+      #      plt.imshow(si_scan.mask_As)
       #      plt.show()
         
         # create a dictionary that contains information about each feature in the scan
         # key = feature n: value = Feature instance. It includes feature type and pixel coordinate
         i = 0
-        for feature_type, coords in self.feature_coords.items():
+        for feature_type, coords in si_scan.feature_coords.items():
             for coord in coords:
                 i += 1
-                self.features[i] = Feature(self.scan, coord, feature_type)
+                si_scan.features[i] = Feature(si_scan.scan, coord, feature_type)
+
+
+        return output2#, output
+
+    def UNET_predict(self, patches, UNet, sqrt_num_patches, res):
+        '''
+        Turns filled states into overlapping patches, run UNet on them, 
+        then reconstructs the image from the patches to give 
+        prediction.
+        Args: 
+            patches (npy): numpy array to run prediction on. Shape is (num_patches, 1, win_size, win_size)
+            UNet (nn.Module): UNet to run prediction with
+            sqrt_num_patches (int): number of patches in one direction (i.e. if there are 4 patches in total, sqrt_num_patches=2)
+        Returns:
+            prediction (npy): numpy array of shape (res,res)
+        '''
+
+        unet_prediction = UNet(patches)
+        unet_prediction = torch.reshape(unet_prediction, (sqrt_num_patches, sqrt_num_patches, 2, 1, 32, 32))
+        prediction = torch.zeros((2, res, res))
+        # To get rid of edge effects of the U-Net, we take smaller steps so each crop overlaps and then take an average over the crops
+        # takes a bit longer to compute but is more accurate
+        for i in range(sqrt_num_patches):
+            for j in range(sqrt_num_patches):
+                prediction[:,i*16:(i*16)+32, j*16:(j*16)+32] = prediction[:,i*16:(i*16)+32, j*16:(j*16)+32] + unet_prediction[i,j,:,0,:,:]     
+        unet_prediction = torch.argmax(prediction,dim=0)
         
-
-        np.save('ECcrops', np.array(self.windows))
-        return output, output2
-
+        return unet_prediction.detach().numpy()
+        
     def turn_rgb(self,array):
-    # takes in array that's one hot encoded with up to 7 categories and outputs segmented image
+        '''
+        Turns one-hot encoded array with up to 7 categories into an rgb image
+    
+        Args:
+            array: numpy array of shape (res,res,7) with the different features labelled with
+                  one-hot encoding.
+        returns:
+            output: numpy array of shape (res,res,3) with the different features labelled with
+                    rgb encoding.
+        '''
         array = array.astype(np.uint8)
         res = array.shape[0]
         output = np.zeros((res,res,3))
@@ -640,118 +764,6 @@ class Detector(object):
         return len(coords)/(self.size**2)
     '''
 
-    def feature_dists(self):
-        """
-        For every feature on the scan it finds the distance between it and every other feature.
-        It stored this in a dictionary of that feature (feature.distances) where the keys
-        are the feature instances and the values are the distances between the two features.
-
-        Args:
-            Self.
-
-        Returns:
-            None
-        
-        """
-
-        for feature1 in self.features.values():
-            if feature1.feature_type != 'anomalies' and feature1.feature_type != 'closeToDV':
-                for feature2 in self.features.values():
-                    if feature2.feature_type != 'anomalies' and feature2.feature_type != 'closeToDV':
-                        if feature1!=feature2:
-                            dist = np.sqrt(np.sum((feature2.coord-feature1.coord)**2))*self.size/self.res
-                            feature1.distances[feature2] = dist
-                            #print(dist, feature1.feature_type, feature2.feature_type)
-        
-        return 
-    
-    def find_pairs(self, feature1_type, feature2_type, max_dist):
-        '''
-        finds pairs of features that are a certain distance from each other
-        it also produces an image of the feature pairs labelled
-        
-        Args:
-            max_dist: the maximum wanted distance between two features (in nm)
-            feature1_type and feature2_type: the types of feature. One of oneDB', 'twoDB', 'anomalies', 'As'
-        
-        Returns:
-        Dictionary with number of feature pair as key and feature pair as value (where a feature is a feature
-        object from this .py doc).
-
-        '''
-
-        feature_pairs_dict = {}
-        i = 0
-        for feature1 in self.features.values():
-            if feature1.feature_type == feature1_type:
-                for feature2 in self.features.values():
-                    if feature1!=feature2 and [feature2, feature1] not in feature_pairs_dict.values():
-                        if feature2.feature_type == feature2_type:
-                            distance = feature1.distances[feature2]
-                            if distance <=max_dist:
-                                feature_pairs_dict[i] = [feature1, feature2]
-                                i += 1
-
-        self.label_pairs(feature_pairs_dict, feature1_type, feature2_type, max_dist)
-
-        return feature_pairs_dict
-    
-
-    def label_pairs(self, dict_pairs, feature1, feature2, max_dist):
-        """
-        Produces a labelled image of the pairs of features
-        We draw on the image using PIL
-        
-        Args:
-            dict_pairs: dictionary with keys as the pair number, and values as the feature
-                        pairs (where a feature is an instance of a feature object from this .py doc)
-            feature1: the types of feature. One of oneDB', 'twoDB', 'anomalies', 'As'
-            feature2: the types of feature. One of oneDB', 'twoDB', 'anomalies', 'As'
-
-        Returns:
-            Nothing
-        """
-
-        # Prepare to draw on the image
-        scan_c = self.data.copy()
-        
-        # Create a figure and axis
-        fig, ax = plt.subplots()
-        ax.imshow(scan_c[:,:,0], cmap='afmhot')
-
-#        plt.imshow(scan_c[:,:,0])
-        for i, pair in enumerate(dict_pairs.values()):
-            # Draw on the image
-            centre_coord = (pair[0].coord+pair[1].coord)/2
-            y1, x1 = pair[0].coord
-            y2, x2 = pair[1].coord
-            # Draw the text on the image
-            ax.text(centre_coord[1], centre_coord[0], '{}, {}nm'.format(str(i), str(round(pair[0].distances[pair[1]],1)) ), fontdict={'color': 'blue'}) 
-           # draw.text(centre_coord, str(i), fill="blue")
-            radius = 6/512 * self.res
-            
-            # draw line from first feature to second
-            plt.plot([x1,x2], [y1,y2], color="white", linewidth=1) 
-
-            
-        #plt.savefig(scan_c, '{}_labelled_pairs_of_{}_{}'.format(self.scan, feature1, feature2))
-        plt.title('{} and {} pairs closer than {}nm'.format(feature1, feature2, max_dist))
-        plt.show()
-        
-        return
-
-    def oneDhistogram(self, distances, edge, dr, density):
-        nbins = edge//dr
-        histogram = np.histogram(distances, bins = nbins)
-        # normalise 
-        histogram[0][0] = 0 # the pixels right next to feature are due to itself which we don't count
-        for i in range(nbins):
-            j = i+1
-            normalisation = np.pi*(dr*j)*dr * density
-            histogram[0][j] = histogram/normalisation
-
-        return histogram
-
 
 
 
@@ -762,18 +774,27 @@ if __name__ == "__main__":
     #plt.show()
     #plt.imshow(empty_AsEC1)
     #plt.show()
+    
+    # make an STM object from NavigatingTheMatrix file
     scan = nvm.STM(r'C:\Users\nkolev\OneDrive - University College London\Documents\image processing\AsH3 identification\dosed\mtrx\20181123-122007_STM_AtomManipulation-Earls Court-Si(100)-H term--26_1.Z_mtrx', None, None, None, standard_pix_ratio=512/100)
+    # clean up the scans
     scan.clean_up(scan.trace_down, 'trace down', plane_level=True)
     scan.clean_up(scan.retrace_down, 'retrace down', plane_level=True)
+    # correct hysteresis
     scan.trace_down_proc, scan.retrace_down_proc, corrected = scan.correct_hysteresis(scan.trace_down_proc, scan.retrace_down_proc, 'trace down')
-    prediction_AsEC1 = Scan(scan, 'trace down', As=True)
-    print(prediction_AsEC1.feature_coords['As'])
-    prediction_AsEC1.feature_dists()
-    prediction_AsEC1.find_pairs('As', 'As', 20)
-   # prediction_AsEC1.find_pairs('oneDB', 'oneDB', 10)
-    prediction_AsEC1.find_pairs('As', 'oneDB', 20)
-    #prediction_AsEC1.find_pairs('As', 'As', 50)
-    plt.imshow(prediction_AsEC1.rgb)
+    # make a Si_scan object just for trace down
+    trace_down = Si_Scan(scan, 'trace down', As=True)
+    # make detector object to find and label defects
+    detector = Detector()
+    # run prediction
+    trace_down.one_hot_segmented = detector.predict(trace_down, As = True)
+    # turn output into rgb image
+    trace_down.rgb = detector.turn_rgb(trace_down.one_hot_segmented)
+    ic(trace_down.feature_coords['As'])
+    trace_down.feature_dists()
+    trace_down.find_pairs('As', 'As', 20)
+    trace_down.find_pairs('As', 'oneDB', 20)
+    plt.imshow(trace_down.rgb)
     plt.show()
 
    # filled_AsB1 = np.load(r'C:\Users\nkolev\Documents\image processing\AsH3 identification\dosed\numpy arrays\20181123-122007_STM_AtomManipulation-Earls Court-Si(100)-H term--26_1_2.npy')[::-1,:][::2,::2]
