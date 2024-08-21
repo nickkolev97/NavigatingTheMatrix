@@ -1,13 +1,7 @@
-from functools import reduce
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-import scipy
 import access2thematrix
-from scipy import signal
-from scipy.ndimage import gaussian_filter
-from skimage import transform
-from PIL import ImageChops
 import cv2
 # Median filtering
 from despike.median import mask, median
@@ -27,7 +21,6 @@ class STM(object):
         width (float): The width of the image in nm.
         height (float): The height of the image in nm.
         data (dict): A dictionary of the traces and retraces.
-        error (dict): A dictionary of the error traces and retraces.
         trace/retrace_up/down (np.array): The trace/retrace of the up/down scan.
         trace/retrace_up/down_proc (np.array): The processed trace/retrace of the up/down scan.
         steps_present (bool): Whether there are steps present in the image.
@@ -56,21 +49,15 @@ class STM(object):
         self.standard_pix_ratio = standard_pix_ratio 
         # open the topography file using access to the matrix. It is returned as a dictionary of the traces and retraces
         self.data = self._open_file(file)
-        # now open the error file too
-        self.error = self._open_file(file[:-6]+'I_mtrx')
         
         self.trace_up = self.data[0][::-1,:]
-        self.error_trace_up = self.error[0][::-1,:]
         # assumes the second scan will always be the retrace (i.e. we never have just an trace up and trace down with no retraces)
         if 1<len(self.data)<5:
             self.retrace_up = self.data[1][::-1,:]
-            self.error_retrace_up = self.error[1][::-1,:]
         if 2<len(self.data)<5:
             self.trace_down = self.data[2][::-1,:]
-            self.error_trace_down = self.error[2][::-1,:]
         if len(self.data)==4:
             self.retrace_down = self.data[3][::-1,:]
-            self.error_retrace_down = self.error[3][::-1,:]
 
         # these will be used to store the processed data
         self.trace_up_proc = None

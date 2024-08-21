@@ -6,11 +6,7 @@ import matplotlib.patches as patches
 import cv2, argparse
 import torch
 import models as mo
-from skimage.transform import probabilistic_hough_line, hough_line, hough_line_peaks
-from skimage.feature import canny
-from scipy import stats
-from scipy.ndimage import gaussian_filter
-from PIL import Image, ImageDraw, ImageFont
+
 import NavigatingTheMatrix as nvm
 import patchify as pat
 from pathlib import Path
@@ -36,7 +32,7 @@ model5 = mo.Classifier(channels=2, crop_size=11, n_outputs=5, fc_layers=2, fc_no
 cwd = Path.cwd() # get current working directory
 UNet1 = load_model(UNET1, Path.joinpath(cwd,'models', 'UNet_bright.pth') ) # UNET finding bright features
 UNet2 = load_model(UNET2, Path.joinpath(cwd,'models', 'UNet_DV.pth') ) # UNET finding dark features/dimer vacancies
-UNet3 = load_model(UNET3, Path.joinpath(cwd,'models', 'UNet_steps.pth') ) # UNET finding step edges
+UNet3 = load_model(UNET3, Path.joinpath(cwd,'models', 'UNet_steps_newtest.pth') ) # UNET finding step edges
 
 model4 = load_model(model4, Path.joinpath(cwd,'models', 'Si(001)-H_classifier.pth') ) # 98% train acc, 91%test acc (1DB, 2DB, an, background)
 model5 = load_model(model5, Path.joinpath(cwd,'models', 'Si(001)-H+AsH3_classifier.pth') ) # 92% train acc, 90%test acc (1DB, 2DB, an, background, As)
@@ -168,13 +164,14 @@ class Si_Scan(object):
         
         return 
     
-    def find_pairs(self, feature1_type, feature2_type, max_dist):
+    def find_pairs(self, feature1_type, feature2_type, max_dist, min_dist):
         '''
         finds pairs of features that are a certain distance from each other
         it also produces an image of the feature pairs labelled
         
         Args:
             max_dist: the maximum wanted distance between two features (in nm)
+            min_dist: the minimum wanted distance between two features (in nm)
             feature1_type and feature2_type: the types of feature. One of 'oneDB', 'twoDB', 'anomalies', 'As'
         
         Returns:
@@ -192,15 +189,15 @@ class Si_Scan(object):
                         if feature2.feature_type == feature2_type:
                             distance = feature1.distances[feature2]
                            # ic(distance, max_dist)
-                            if distance <=max_dist:
+                            if distance <=max_dist and distance >= min_dist:
                                 feature_pairs_dict[i] = [feature1, feature2]
                                 i += 1
 
-        self.label_pairs(feature_pairs_dict, feature1_type, feature2_type, max_dist)
+        self.label_pairs(feature_pairs_dict, feature1_type, feature2_type, max_dist, min_dist)
 
         return feature_pairs_dict
 
-    def label_pairs(self, dict_pairs, feature1, feature2, max_dist):
+    def label_pairs(self, dict_pairs, feature1, feature2, max_dist, min_dist):
         """
         Produces a labelled image of the pairs of features
         We draw on the image using PIL
@@ -210,6 +207,8 @@ class Si_Scan(object):
                         pairs (where a feature is an instance of a feature object from this .py doc)
             feature1: the types of feature. One of oneDB', 'twoDB', 'anomalies', 'As'
             feature2: the types of feature. One of oneDB', 'twoDB', 'anomalies', 'As'
+            max_dist: the maximum wanted distance between two features (in nm)
+            min_dist: the minimum wanted distance between two features (in nm)
 
         Returns:
             Nothing
@@ -238,7 +237,7 @@ class Si_Scan(object):
 
             
         #plt.savefig(scan_c, '{}_labelled_pairs_of_{}_{}'.format(self.scan, feature1, feature2))
-        plt.title('{} and {} pairs closer than {}nm'.format(feature1, feature2, max_dist))
+        plt.title('{} and {} pairs with separation between {}nm and {}nm'.format(feature1, feature2, min_dist, max_dist))
         plt.show()
         
         return
@@ -443,58 +442,57 @@ class Detector(object):
         self.num_features = numLabels
         
         
-        for i in range(0, numLabels):
-            if i == 0:
-                pass # first one is background so ignore
+        for i in range(1, numLabels):
+            # i == 0 is background so start from 1
             # otherwise, we are examining an actual connected component
-            else:
-                # extract the connected component statistics and centroid for
-                # the current label
-                temp_features = [] # store feature coordinates from this label   
-                area = stats[i, cv2.CC_STAT_AREA]
-                num_features = int(round(area/area_per_feature, 0)) # number of features in that label
         
-                if num_features>3:
-                # if the area is above some threshold (3*pi*r^2) then we say that it's an anomaly
-                # (could be a contaminant, could be a large cluster of DBs) and don't bother trying to categorise it
-                    si_scan.mask_An[labels == i] = 1
+            # extract the connected component statistics and centroid for
+            # the current label
+            temp_features = [] # store feature coordinates from this label   
+            area = stats[i, cv2.CC_STAT_AREA]
+            num_features = int(round(area/area_per_feature, 0)) # number of features in that label
+    
+            if num_features>3:
+            # if the area is above some threshold (3*pi*r^2) then we say that it's an anomaly
+            # (could be a contaminant, could be a large cluster of DBs) and don't bother trying to categorise it
+                si_scan.mask_An[labels == i] = 1
+            
+            else:
+                # now make a temporary array to look at what is the scan but only non-zero where this label is
+                temp_array = scanc[:,:, 0].copy()
+                temp_array[labels != i] = 0
                 
-                else:
-                    # now make a temporary array to look at what is the scan but only non-zero where this label is
-                    temp_array = scanc[:,:, 0].copy()
-                    temp_array[labels != i] = 0
-                    
-                    coord = np.array(np.unravel_index(temp_array.argmax(), temp_array.shape))
-                    temp_features.append(coord)
-                   # features += temp_features ?
+                coord = np.array(np.unravel_index(temp_array.argmax(), temp_array.shape))
+                temp_features.append(coord)
+                # features += temp_features ?
 
-                    # now find what feature it is
-                    y, prediction, coord = self.label_feature(si_scan, scan_filled, scan_empty, coord, DVcoords)
-                    coord = np.expand_dims(coord, axis=0) 
-                   # update the corresponding mask for that feature
-                    
-                    if prediction == 1:
-                        si_scan.mask_1DB += labels==i
-                    elif prediction == 2:
-                        si_scan.mask_2DB += labels==i
-                    elif prediction == 3:
-                        si_scan.mask_An += labels==i
-                    elif prediction == 5:
-                        si_scan.mask_As += labels==i
-                    elif prediction == 8:
-                        si_scan.mask_CDV += labels==i
+                # now find what feature it is
+                y, prediction, coord = self.label_feature(si_scan, scan_filled, scan_empty, coord, DVcoords)
+                coord = np.expand_dims(coord, axis=0) 
+                # update the corresponding mask for that feature
+                
+                if prediction == 1:
+                    si_scan.mask_1DB += labels==i
+                elif prediction == 2:
+                    si_scan.mask_2DB += labels==i
+                elif prediction == 3:
+                    si_scan.mask_An += labels==i
+                elif prediction == 5:
+                    si_scan.mask_As += labels==i
+                elif prediction == 8:
+                    si_scan.mask_CDV += labels==i
 
-                    
-                    
-                    ## TODO: NEED TO THINK ABOUT HOW TO DEAL WITH THIS. MAKE THE STEP EDGE DETECTOR MORE ROBUST? KEEP IT LIKE THIS THEN FILTER OUT THE SMALL STEPS AGAIN?
-                    #elif prediction == 6:
-                    #    si_scan.mask_step_edges[labels==i] = 1
-                    #    plt.figure(figsize=(10,10))
-                    #    plt.imshow(si_scan.mask_step_edges)
-                    #    plt.show()
+                
+                
+                ## TODO: NEED TO THINK ABOUT HOW TO DEAL WITH THIS. MAKE THE STEP EDGE DETECTOR MORE ROBUST? KEEP IT LIKE THIS THEN FILTER OUT THE SMALL STEPS AGAIN?
+                #elif prediction == 6:
+                #    si_scan.mask_step_edges[labels==i] = 1
+                #    plt.figure(figsize=(10,10))
+                #    plt.imshow(si_scan.mask_step_edges)
+                #    plt.show()
 
-                    #if unsure:
-                    #    self.unsure.append(coord)
+                #if unsure:
+                #    self.unsure.append(coord)
        
     def label_feature(self, si_scan, scan_filled, scan_empty, coord, DVcoords):
         '''
@@ -574,7 +572,7 @@ class Detector(object):
             
         return y, prediction, coord-self.crop_size
 
-    def predict(self, si_scan, As, win_size=32):
+    def predict(self, si_scan, As, win_size_def=32, win_size_step=64):
         '''
         Outputs a fully segmented image of the scan.
 
@@ -590,26 +588,34 @@ class Detector(object):
         res = si_scan.res
         array = si_scan.scan[:,:,0].copy()
 
-        dim = int(res//win_size)
         # max/min normalise
         array = (array-np.min(array))/(np.max(array)-np.min(array))
-        sqrt_num_patches = ((res-win_size)//(win_size//2)+1)
-        # patches for UNets
-        patches1 = np.reshape( pat.patchify(array, (win_size, win_size), step = win_size//2), ( ( sqrt_num_patches**2 , 1, win_size,win_size) ) )
+        # patches for UNets for bright and dark features (patch size is 32)
+        dim = int(res//win_size_def)
+        sqrt_num_patches = ((res-win_size_def)//(win_size_def//2)+1)
+        patches1 = np.reshape( pat.patchify(array, (win_size_def, win_size_def), step = win_size_def//2), ( ( sqrt_num_patches**2 , 1, win_size_def,win_size_def) ) )
         # normalise and turn to tensor
         patches1 = self.norm2(torch.tensor(patches1).float())
+        
+        # patches for UNets for step (patch size is 64)
+        dim2 = int(res//win_size_step)
+        sqrt_num_patches2 = ((res-win_size_step)//(win_size_step//2)+1)
+        patches2 = np.reshape( pat.patchify(array, (win_size_step, win_size_step), step = win_size_step//2), ( ( sqrt_num_patches2**2 , 1, win_size_step,win_size_step) ) )
+        # normalise and turn to tensor
+        patches2 = self.norm2(torch.tensor(patches2).float())
+   
 
         # find bright features
         torch.manual_seed(0)
-        si_scan.mask_bright_features = self.UNET_predict(patches1, self.UNETbright, sqrt_num_patches, res)
+        si_scan.mask_bright_features = self.UNET_predict(patches1, self.UNETbright, sqrt_num_patches, res, patch_res = win_size_def)
                 
         # find dark features
         torch.manual_seed(0)
-        si_scan.mask_DV = self.UNET_predict(patches1, self.UNETdark, sqrt_num_patches, res)
+        si_scan.mask_DV = self.UNET_predict(patches1, self.UNETdark, sqrt_num_patches, res, patch_res = win_size_def)
     
         # find step edges
         torch.manual_seed(0)
-        unet_prediction3 = self.UNET_predict(patches1, self.UNETstep, sqrt_num_patches, res)
+        unet_prediction3 = self.UNET_predict(patches2, self.UNETstep, sqrt_num_patches2, res, patch_res = win_size_step)
 
         # get rid of any step edges that that are small since these probably aren't step edges
         connected_comps = cv2.connectedComponentsWithStats(unet_prediction3.astype(np.uint8))#, args["connectivity"], cv2.CV_32S)
@@ -678,7 +684,7 @@ class Detector(object):
 
         return output2#, output
 
-    def UNET_predict(self, patches, UNet, sqrt_num_patches, res):
+    def UNET_predict(self, patches, UNet, sqrt_num_patches, res, patch_res = 32):
         '''
         Turns filled states into overlapping patches, run UNet on them, 
         then reconstructs the image from the patches to give 
@@ -687,18 +693,20 @@ class Detector(object):
             patches (npy): numpy array to run prediction on. Shape is (num_patches, 1, win_size, win_size)
             UNet (nn.Module): UNet to run prediction with
             sqrt_num_patches (int): number of patches in one direction (i.e. if there are 4 patches in total, sqrt_num_patches=2)
+            patch_res (int): resolution of the patches to be made
         Returns:
             prediction (npy): numpy array of shape (res,res)
         '''
 
+        step_size = patch_res//2
         unet_prediction = UNet(patches)
-        unet_prediction = torch.reshape(unet_prediction, (sqrt_num_patches, sqrt_num_patches, 2, 1, 32, 32))
+        unet_prediction = torch.reshape(unet_prediction, (sqrt_num_patches, sqrt_num_patches, 2, 1, patch_res, patch_res))
         prediction = torch.zeros((2, res, res))
         # To get rid of edge effects of the U-Net, we take smaller steps so each crop overlaps and then take an average over the crops
         # takes a bit longer to compute but is more accurate
         for i in range(sqrt_num_patches):
             for j in range(sqrt_num_patches):
-                prediction[:,i*16:(i*16)+32, j*16:(j*16)+32] = prediction[:,i*16:(i*16)+32, j*16:(j*16)+32] + unet_prediction[i,j,:,0,:,:]     
+                prediction[:,i*step_size:(i*step_size)+patch_res, j*step_size:(j*step_size)+patch_res] = prediction[:,i*step_size:(i*step_size)+patch_res, j*step_size:(j*step_size)+patch_res] + unet_prediction[i,j,:,0,:,:]     
         unet_prediction = torch.argmax(prediction,dim=0)
         
         return unet_prediction.detach().numpy()
@@ -768,15 +776,10 @@ class Detector(object):
 
 
 if __name__ == "__main__":
-    #filled_AsEC1 = np.load(r'C:\Users\nkolev\OneDrive - University College London\Documents\image processing\AsH3 identification\dosed\numpy arrays\20181123-122007_STM_AtomManipulation-Earls Court-Si(100)-H term--26_1_2.npy')[::-1,:][::2,::2]
-    #empty_AsEC1 = np.load(r'C:\Users\nkolev\OneDrive - University College London\Documents\image processing\AsH3 identification\dosed\numpy arrays\20181123-122007_STM_AtomManipulation-Earls Court-Si(100)-H term--26_1_3_cor.npy')[::-1,:][::2,::2]
-    #plt.imshow(filled_AsEC1)
-    #plt.show()
-    #plt.imshow(empty_AsEC1)
-    #plt.show()
-    
+    cwd = Path.cwd() # current working directory
+    path = cwd / 'examples' / '20181123-122007_STM_AtomManipulation-Earls Court-Si(100)-H term--26_1.Z_mtrx'
     # make an STM object from NavigatingTheMatrix file
-    scan = nvm.STM(r'C:\Users\nkolev\OneDrive - University College London\Documents\image processing\AsH3 identification\dosed\mtrx\20181123-122007_STM_AtomManipulation-Earls Court-Si(100)-H term--26_1.Z_mtrx', None, None, None, standard_pix_ratio=512/100)
+    scan = nvm.STM( str(path) , None, None, None, standard_pix_ratio=512/100)
     # clean up the scans
     scan.clean_up(scan.trace_down, 'trace down', plane_level=True)
     scan.clean_up(scan.retrace_down, 'retrace down', plane_level=True)
@@ -791,37 +794,11 @@ if __name__ == "__main__":
     # turn output into rgb image
     trace_down.rgb = detector.turn_rgb(trace_down.one_hot_segmented)
     ic(trace_down.feature_coords['As'])
+    # find distances between features
     trace_down.feature_dists()
-    trace_down.find_pairs('As', 'As', 20)
-    trace_down.find_pairs('As', 'oneDB', 20)
+    # filter for distances and certain feature types
+    trace_down.find_pairs('As', 'As', max_dist = 20, min_dist = 15)
+    trace_down.find_pairs('As', 'oneDB', max_dist = 15, min_dist = 10)
+    # show final segmentation
     plt.imshow(trace_down.rgb)
     plt.show()
-
-   # filled_AsB1 = np.load(r'C:\Users\nkolev\Documents\image processing\AsH3 identification\dosed\numpy arrays\20181123-122007_STM_AtomManipulation-Earls Court-Si(100)-H term--26_1_2.npy')[::-1,:][::2,::2]
-   # error_AsB1 = plt.imread(r'C:\Users\nkolev\Documents\image processing\AsH3 identification\dosed\error png\20181123-122007_STM_AtomManipulation-Earls Court-Si(100)-H term--26_1_I2.png')[::2,::2]
-   # plt.imshow(filled_AsB1)
-   # plt.show()
-   # data = np.stack((filled_AsB1, error_AsB1), axis=2)
-   # prediction_AsEC1 = Scan(data, As=True)
-   # plt.imshow(prediction_AsB1.rgb)
-   # plt.show()
-
-   # filled_cl = np.load(r'C:\Users\nkolev\Documents\image processing\AsH3 identification\undosed\numpy array\20191122-195611_Chancery Lane-Si(001)H--22_2_0.npy')[::-1,:][::2,::2]
-   # error_cl = plt.imread(r'C:\Users\nkolev\Documents\image processing\AsH3 identification\undosed\error png\20191122-195611_Chancery Lane-Si(001)H--22_2_I.png')[::2,::2]
-   # plt.imshow(filled_cl)
-   # plt.show()
-   # data = np.stack((filled_cl, error_cl), axis=2)
-   # prediction_cl = Scan(data, As=False)
-   # plt.imshow(prediction_cl.rgb)
-   # plt.show()
- 
-  #  filled_AsAm = np.load(r'E:\nick\2022-08-11\20220811-111732_Amersham_V4B2-Si(001)H-STM_AtomManipulation--12_1_0.npy')[::-1,:][512:1024,512:1024]
-  #  print(filled_AsAm.shape)
-  #  plt.imshow(filled_AsAm)
-  #  plt.show()
-  #  error_AsAm = plt.imread(r'E:\nick\2022-08-11\20220811-111732_Amersham_V4B2-Si(001)H-STM_AtomManipulation--12_1_0I.png')[512:1024,512:1024]
-  #  data = np.stack((filled_AsAm, error_AsAm), axis=2)
-  #  prediction_AsEC1 = Scan(data, As=False)
-  #  plt.imshow(prediction_AsEC1.rgb)
-  #  plt.show()
-  #  np.save('AsAm')
