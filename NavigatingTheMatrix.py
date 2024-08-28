@@ -226,7 +226,9 @@ class STM(object):
 
     def correct_hysteresis(self, trace, retrace, up_down):
         '''
-        Corrects the hysteresis in the scan. Assumes the scan is square.
+        Corrects the hysteresis in the scan. Assumes the scan is square. Returns the corrected trace and retrace.
+        Also corrects the unprocessed trace and retrace so that the hysteresis correction is consistent and redefines 
+        the other scans with this corrected version.
         Uses the SIFT algorithm to find common points between trace and retrace.
 
         Parameters:
@@ -239,6 +241,7 @@ class STM(object):
             possible (bool): Whether the hysteresis correction was possible.    
        
         '''
+
         
         res = trace.shape[0]
         # we need to use the OpenCV SIFT algorithm which needs the scan in a certain format
@@ -299,14 +302,17 @@ class STM(object):
         
         tracec = trace.copy()
         retracec = retrace.copy()
+        
+        # correct hysterisis on scans that were not plane levelled/scan line aligned
         if up_down == 'trace up':
        #     unproc_tracec = self.trace_up
             unproc_retrace = self.retrace_up.copy()
-            unproc_retracec = self.retrace_up.copy()
-        if up_down == 'trace down':
+            unproc_retracec = self.retrace_up.copy() # this will be the corrected version
+        elif up_down == 'trace down':
        #     unproc_tracec = self.trace_down
             unproc_retrace = self.retrace_down.copy()
-            unproc_retracec = self.retrace_down.copy()
+            unproc_retracec = self.retrace_down.copy() # this will be the corrected version
+        
         for i in range(res):
             x_new = int(round(i - k3*np.sin(np.pi*i/res),0))
             for j in range(res):
