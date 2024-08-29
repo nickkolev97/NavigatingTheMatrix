@@ -232,32 +232,34 @@ class Si_Scan(object):
             for feature in self.features.values():
                 if feature.feature_type == feature3_type:
                     if feature!=pair12[0] and feature!=pair12[1]:
-                        # find distances
-                        dist1 = pair12[0].distances[feature]
-                        dist2 = pair12[1].distances[feature]
                         # create a sorted tuple of the triplet to avoid double counting
-                        triplet = tuple(sorted((pair12[0], pair12[1], feature), key=lambda x: (x.coord[0], x.coord[1])))
+                        triplet = tuple(sorted((pair12[0], pair12[1], feature), key=lambda x: (x.coord[0], x.coord[1])))               
                         # check if the triplet is already in the set
                         if triplet not in triplets_set:
-                            # check if distances are within the wanted range
-                            if not uniform_dist: # only 2 pairs need to satisfy the distance condition
-                                if dist1 <= max_dist and dist1 >= min_dist or dist2 <= max_dist and dist2 >= min_dist:
-                                    # find the angle between the features
-                                    
-                                    feature_triplets_dict[i] = [pair12[0], pair12[1], feature]
-                                    triplets_set.add(triplet)
-                                    i += 1
-                            else: # all 3 pairs need to satisfy the distance condition
-                                if dist1 <= max_dist and dist1 >= min_dist and dist2 <= max_dist and dist2 >= min_dist:
-                                    feature_triplets_dict[i] = [pair12[0], pair12[1], feature]
-                                    triplets_set.add(triplet)
-                                    i += 1
+                            # find the angle between the features
+                            angles = self._find_triangle_angles(pair12[0].coord, pair12[1].coord, feature.coord)
+                            # check if angles are within the wanted range
+                            # only 1 of the angles in the triangle formed by the triplet need to satisfy the angle condition
+                            if angles[0] <= max_angle and angles[0] >= min_angle or angles[1] <= max_angle and angles[1] >= min_angle or angles[2] <= max_angle and angles[2] >= min_angle:    
+                                # find distances
+                                dist1 = pair12[0].distances[feature]
+                                dist2 = pair12[1].distances[feature]        
+                                # check if distances are within the wanted range
+                                if not uniform_dist: # only 2 pairs need to satisfy the distance condition
+                                    if dist1 <= max_dist and dist1 >= min_dist or dist2 <= max_dist and dist2 >= min_dist:
+                                        feature_triplets_dict[i] = [pair12[0], pair12[1], feature]
+                                        triplets_set.add(triplet)
+                                        i += 1
+                                else: # all 3 pairs need to satisfy the distance condition
+                                    if dist1 <= max_dist and dist1 >= min_dist and dist2 <= max_dist and dist2 >= min_dist:
+                                        feature_triplets_dict[i] = [pair12[0], pair12[1], feature]
+                                        triplets_set.add(triplet)
+                                        i += 1
                             
         if display_image:
             self.annotate_scan(feature_triplets_dict, [feature1_type, feature2_type, feature3_type], max_dist, min_dist)
 
         return feature_triplets_dict
-
 
     def annotate_scan(self, dict_ntuplets, features, max_dist, min_dist, fig_size = (10,10)):
         """
@@ -360,6 +362,28 @@ class Si_Scan(object):
             plt.show()
 
         return
+
+    def _find_triangle_angles(self, coord1, coord2, coord3):
+        '''
+        Find the angles in the triangle formed by the three coordinates.
+        We use the cosine rule to find the angles.
+        Args:
+            coord1, coord2, coord3: the coordinates of the three features
+        Returns:
+            angles: a list of the three angles in degrees
+        '''
+        # find the sides of the triangle
+        a = np.sqrt(np.sum((coord2-coord3)**2))
+        b = np.sqrt(np.sum((coord1-coord3)**2))
+        c = np.sqrt(np.sum((coord1-coord2)**2))
+        # find the angles
+        angle1 = np.arccos((b**2 + c**2 - a**2)/(2*b*c))
+        angle2 = np.arccos((a**2 + c**2 - b**2)/(2*a*c))
+        angle3 = np.arccos((a**2 + b**2 - c**2)/(2*a*b))
+        # convert to degrees
+        angles = [angle1*180/np.pi, angle2*180/np.pi, angle3*180/np.pi]
+        return angles
+
 
     def oneDhistogram(self, distances, edge, dr, density):
         nbins = edge//dr
