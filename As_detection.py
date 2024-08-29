@@ -164,7 +164,7 @@ class Si_Scan(object):
         
         return 
     
-    def find_pairs(self, feature1_type, feature2_type, max_dist, min_dist):
+    def find_pairs(self, feature1_type, feature2_type, max_dist, min_dist, display_image = False):
         '''
         finds pairs of features that are a certain distance from each other
         it also produces an image of the feature pairs labelled
@@ -193,19 +193,24 @@ class Si_Scan(object):
                                 feature_pairs_dict[i] = [feature1, feature2]
                                 i += 1
 
-        self.annotate_scan(feature_pairs_dict, max_dist, min_dist)
+        if display_image:
+            self.annotate_scan(feature_pairs_dict, [feature1_type, feature2_type], max_dist, min_dist)
 
         return feature_pairs_dict
 
-    def find_triplets(self, feature1_type, feature2_type, feature3_type, max_dist, min_dist, pairwise = True):
+    def find_triplets(self, feature1_type, feature2_type, feature3_type, max_dist, min_dist, max_angle, min_angle, uniform_dist = False, display_image = False):
         '''
-        Finds triplets of features that are a certain distance from each other.
+        Finds triplets of features that are a certain distance from each other, with a certain angle between them.
         It also produces an image of the feature triplets labelled.
         TODO: Also finds the angle between the features.
 
         Args:
             max_dist: the maximum wanted distance between two features (in nm)
             min_dist: the minimum wanted distance between two features (in nm)
+            max_angle: the maximum wanted angle between the features (in degrees) (only 1 of the angles in the triangle formed by the triplet need to satisfy this condition)
+            min_angle: the minimum wanted angle between the features (in degrees) (only 1 of the angles in the triangle formed by the triplet need to satisfy this condition)
+            uniform_dist: if True, the max_dist and min_dist are the same for all pairs of features. If False, then only
+                          two of the pairs need to satisfy the distance condition.  
             feature1_type and feature2_type feature3_type: the types of feature. One of 'oneDB', 'twoDB', 'anomalies', 'As'
         
         Returns:
@@ -214,35 +219,47 @@ class Si_Scan(object):
 
         '''
 
-        # first we want to find all feature pairs that satisfy the distance condition
+        # find all feature pairs that satisfy the distance condition from the first two feature types
         feature_pairs_dict12 = self.find_pairs(feature1_type, feature2_type, max_dist, min_dist)
-        feature_pairs_dict13 = self.find_pairs(feature1_type, feature3_type, max_dist, min_dist)
-        feature_pairs_dict23 = self.find_pairs(feature2_type, feature3_type, max_dist, min_dist)
 
-        # now we want to find all feature triplets that satisfy the distance condition
+        # now we want to find all features of the third type that are within the wanted distance of the first two features
         feature_triplets_dict = {}
+        # set of triplets (used to avoid double counting)
+        triplets_set = set()
+
         i = 0
         for pair12 in feature_pairs_dict12.values():
-            for pair13 in feature_pairs_dict13.values():
-                for pair23 in feature_pairs_dict23.values():
-                    if pair12[0]!=pair13[0] and pair12[0]!=pair23[0] and pair13[0]!=pair23[0]:
-                        if pair12[1]!=pair13[1] and pair12[1]!=pair23[1] and pair13[1]!=pair23[1]:
-                            if pair12[0]!=pair13[1] and pair12[0]!=pair23[1] and pair13[0]!=pair23[1]:
-                                if pair12[1]!=pair13[0] and pair12[1]!=pair23[0] and pair13[1]!=pair23[0]:
-                                    # check if the distance between the features is within the wanted range
-                                    dist12 = pair12[0].distances[pair12[1]]
-                                    dist13 = pair13[0].distances[pair13[1]]
-                                    dist23 = pair23[0].distances[pair23[1]]
-                                    if dist12 <= max_dist and dist12 >= min_dist and dist13 <= max_dist and dist13 >= min_dist and dist23 <= max_dist and dist23 >= min_dist:
-                                        feature_triplets_dict[i] = [pair12[0], pair12[1], pair13[1]]
-                                        i += 1
-
-        self.label_triplets(feature_triplets_dict, feature1_type, feature2_type, feature3_type, max_dist, min_dist)
+            for feature in self.features.values():
+                if feature.feature_type == feature3_type:
+                    if feature!=pair12[0] and feature!=pair12[1]:
+                        # find distances
+                        dist1 = pair12[0].distances[feature]
+                        dist2 = pair12[1].distances[feature]
+                        # create a sorted tuple of the triplet to avoid double counting
+                        triplet = tuple(sorted((pair12[0], pair12[1], feature), key=lambda x: (x.coord[0], x.coord[1])))
+                        # check if the triplet is already in the set
+                        if triplet not in triplets_set:
+                            # check if distances are within the wanted range
+                            if not uniform_dist: # only 2 pairs need to satisfy the distance condition
+                                if dist1 <= max_dist and dist1 >= min_dist or dist2 <= max_dist and dist2 >= min_dist:
+                                    # find the angle between the features
+                                    
+                                    feature_triplets_dict[i] = [pair12[0], pair12[1], feature]
+                                    triplets_set.add(triplet)
+                                    i += 1
+                            else: # all 3 pairs need to satisfy the distance condition
+                                if dist1 <= max_dist and dist1 >= min_dist and dist2 <= max_dist and dist2 >= min_dist:
+                                    feature_triplets_dict[i] = [pair12[0], pair12[1], feature]
+                                    triplets_set.add(triplet)
+                                    i += 1
+                            
+        if display_image:
+            self.annotate_scan(feature_triplets_dict, [feature1_type, feature2_type, feature3_type], max_dist, min_dist)
 
         return feature_triplets_dict
 
 
-    def annotate_scan(self, dict_ntuplets, max_dist, min_dist):
+    def annotate_scan(self, dict_ntuplets, features, max_dist, min_dist, fig_size = (10,10)):
         """
         Produces a labelled image of the n-tuplet of features
         We draw on the image using PIL
@@ -250,6 +267,7 @@ class Si_Scan(object):
         Args:
             dict_ntuplets: dictionary with keys as the ntuplet number, and values as the feature
                             ntuplets (where a feature is an instance of a feature object from this .py doc)
+            features: the types of features that we are looking at. One of 'oneDB', 'twoDB', 'anomalies', 'As'
             max_dist: the maximum wanted distance between two features (in nm)
             min_dist: the minimum wanted distance between two features (in nm)
 
@@ -257,47 +275,90 @@ class Si_Scan(object):
             Nothing
         """
 
-        # make a list of feature types
-        features = []
-        for ntuplet in dict_ntuplets.values():
-            for feature in ntuplet:
-                if feature.feature_type not in features:
-                    features.append(feature.feature_type)
-
         # Prepare to draw on the image
         scan_c = self.scan.copy()
+       
+        # plot all ntuplets on same image
+        fig, ax = plt.subplots(figsize=fig_size)
+        plt.imshow(scan_c[:,:,0], cmap='afmhot')
         
-        # Create a figure and axis
-        fig, ax = plt.subplots()
-        ax.imshow(scan_c[:,:,0], cmap='afmhot')
+        # keep a list of all centre_coords (in big plots) so we know if any repeat
+        centre_coords = []
 
-       # plt.imshow(scan_c[:,:,0])
-        for i, ntuplet in enumerate(dict_ntuplets.values()):
-            n = len(ntuplet)
-            # Find centre coordinate of the ntuplet
-            centre_coord = np.sum( [ntuplet[i].coord for i in range(n)], axis=0 ) / n
-          #  y1, x1 = ntuplet[0].coord
-          #  y2, x2 = ntuplet[1].coord
-            # Draw the text on the image
-           # ax.text(centre_coord[1], centre_coord[0], '{}, {}nm'.format(str(i), str(round(pair[0].distances[pair[1]],1)) ), fontdict={'color': 'blue'}) 
-           # draw.text(centre_coord, str(i), fill="blue")
-           # radius = 6/512 * self.res
-            
+        for i, ntuplet in enumerate(dict_ntuplets.values()):         
             # draw line between each pairs of features and label them with the distance between them
-            for feature1 in ntuplet:
+            for j, feature1 in enumerate(ntuplet):
                 y1, x1 = feature1.coord
-                for feature2 in ntuplet:
-                    if feature1!=feature2:
-                        y2, x2 = feature2.coord
-                        plt.plot([x1,x2], [y1,y2], color="white", linewidth=1)                
-                        # Draw the text on the image
-                        ax.text(centre_coord[1], centre_coord[0], '{}, {}nm'.format(str(i), str(round(feature1.distances[feature2],1)) ), fontdict={'color': 'blue'}) 
-                                    
-            
+                for k, feature2 in enumerate(ntuplet):
+                    if k>j: # this is to stop double counting
+                        if feature1!=feature2:
+                            m = k+j # used to label the lines
+                            y2, x2 = feature2.coord
+                            ax.plot([x1,x2], [y1,y2], color="white", linewidth=1, label = f'{i}.{m}: {round(feature1.distances[feature2],1)}nm')                
+                            # Draw the text halfway between the two features
+                            centre_coord = (np.array([y1,x1]) + np.array([y2,x2]))/2
+                            while list(centre_coord) in centre_coords:
+                                centre_coord += np.array([15,0])
+                            ax.text(centre_coord[1], centre_coord[0], '{}.{}'.format(i, m), fontdict={'color': 'blue'}, size = 15) 
+                            ax.legend()
+                            centre_coords.append(list(centre_coord))
+
         #plt.savefig(scan_c, '{}_labelled_pairs_of_{}_{}'.format(self.scan, feature1, feature2))
         plt.title('{} features with separation between {}nm and {}nm'.format(features, min_dist, max_dist))
         plt.show()
         
+        # now plot all ntuplets on separate images but smaller
+        # if we have more than one ntuplet
+
+        if len(dict_ntuplets)>1: 
+            # determine the number of subplots needed.
+            # First, decide number of columns. Either 2 or 3 columns
+            num_subplots = len(dict_ntuplets)
+            if num_subplots%3 == 0:
+                num_columns = 3
+            else:
+                num_columns = 2
+            num_rows = num_subplots//num_columns
+
+            # can't have 0 rows. If we do num_rows = num_subplots//num_columns+1 instead
+            # we will have a blank row of subplots at the end if num_rows>0. So we do this instead
+            if num_rows == 0:
+                num_rows = 1
+            
+            subplot_figsize = (2*fig_size[0], 2*fig_size[1])
+            fig2, ax2 = plt.subplots(nrows = num_rows, ncols = num_columns, figsize=subplot_figsize)
+
+            for i, ntuplet in enumerate(dict_ntuplets.values()):           
+                # draw line between each pairs of features and label them with the distance between them
+                for j, feature1 in enumerate(ntuplet):
+                    y1, x1 = feature1.coord
+                    for k, feature2 in enumerate(ntuplet):
+                        if k>j: # this is to stop double counting
+                            if feature1!=feature2:
+                                m = k+j # used to label the lines
+                                nrow = i//num_columns
+                                ncol = i%num_columns
+                                if num_rows>1:
+                                    ax2[nrow, ncol].imshow(scan_c[:,:,0], cmap='afmhot')
+                                    y2, x2 = feature2.coord
+                                    ax2[nrow, ncol].plot([x1,x2], [y1,y2], color="white", linewidth=1, label = f'{m}: {round(feature1.distances[feature2],1)}nm')                
+                                    # Draw the text halfway between the two features
+                                    centre_coord = (np.array([y1,x1]) + np.array([y2,x2]))/2    
+                                    ax2[nrow,ncol].text(centre_coord[1], centre_coord[0], '{}'.format(str(m)), fontdict={'color': 'blue'}, size = 15) 
+                                    ax2[nrow, ncol].legend()
+                                else:
+                                    ax2[ncol].imshow(scan_c[:,:,0], cmap='afmhot')
+                                    y2, x2 = feature2.coord
+                                    ax2[ncol].plot([x1,x2], [y1,y2], color="white", linewidth=1, label = f'{m}: {round(feature1.distances[feature2],1)}nm')                
+                                    # Draw the text halfway between the two features
+                                    centre_coord = (np.array([y1,x1]) + np.array([y2,x2]))/2
+                                    ax2[ncol].text(centre_coord[1], centre_coord[0], '{}'.format(str(m)), fontdict={'color': 'blue'}, size = 15) 
+                                    ax2[ncol].legend()
+                    
+            #plt.savefig(scan_c, '{}_labelled_pairs_of_{}_{}'.format(self.scan, feature1, feature2))
+            fig2.suptitle('{} features with separation between {}nm and {}nm'.format(features, min_dist, max_dist))
+            plt.show()
+
         return
 
     def oneDhistogram(self, distances, edge, dr, density):
