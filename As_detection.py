@@ -31,8 +31,8 @@ model5 = mo.Classifier(channels=2, crop_size=11, n_outputs=5, fc_layers=2, fc_no
 # load models
 cwd = Path.cwd() # get current working directory
 UNet1 = load_model(UNET1, Path.joinpath(cwd,'models', 'UNet_bright.pth') ) # UNET finding bright features
-UNet2 = load_model(UNET2, Path.joinpath(cwd,'models', 'UNet_DV.pth') ) # UNET finding dark features/dimer vacancies
-UNet3 = load_model(UNET3, Path.joinpath(cwd,'models', 'UNet_steps_newtest.pth') ) # UNET finding step edges
+UNet2 = load_model(UNET2, Path.joinpath(cwd,'models', 'UNet_DV_new_(scanlines_dark+creep)2.pth') ) # UNET finding dark features/dimer vacancies
+UNet3 = load_model(UNET3, Path.joinpath(cwd,'models', 'UNet_steps_new_.pth') ) # UNET finding step edges
 
 model4 = load_model(model4, Path.joinpath(cwd,'models', 'Si(001)-H_classifier.pth') ) # 98% train acc, 91%test acc (1DB, 2DB, an, background)
 model5 = load_model(model5, Path.joinpath(cwd,'models', 'Si(001)-H+AsH3_classifier.pth') ) # 92% train acc, 90%test acc (1DB, 2DB, an, background, As)
@@ -164,15 +164,20 @@ class Si_Scan(object):
         
         return 
     
-    def find_pairs(self, feature1_type, feature2_type, max_dist, min_dist, display_image = False):
+    def find_pairs(self, feature1_type, feature2_type, max_dist, min_dist, exclusion_dist = False, display_image = False):
         '''
-        finds pairs of features that are a certain distance from each other
-        it also produces an image of the feature pairs labelled
+        finds pairs of features that are a certain distance from each other.
+        it also produces an image of the feature pairs labelled.
+        If exclusion_dist is not None, then it will exclude pairs of features that have some other feature
+        within the exclusion distance of them.
         
         Args:
             max_dist: the maximum wanted distance between two features (in nm)
             min_dist: the minimum wanted distance between two features (in nm)
             feature1_type and feature2_type: the types of feature. One of 'oneDB', 'twoDB', 'anomalies', 'As'
+            exclusion_dist: if True, then it will exclude pairs of features that have other feature of either 
+                            feature1_type or feature2_type within the exclusion_dist of them. (nm)
+            display_image: if True, then it will display the image of the feature pairs labelled
         
         Returns:
             Dictionary with number of feature pair as key and feature pair as value (where a feature is a feature
@@ -181,34 +186,85 @@ class Si_Scan(object):
         '''
 
         feature_pairs_dict = {}
+        
+        pairs_set = set() # set of pairs (used to avoid double counting)
+
+        '''
+        used to use this to find all pairs of features that satisfy the distance condition
+        but found a new way that is faster. Keeping this here in case some mistake new way shows itself
+        if not exclusion_dist:
+            i = 0
+            for feature1 in self.features.values():
+                if feature1.feature_type == feature1_type:
+                    for feature2 in self.features.values():
+                        if feature2.feature_type == feature2_type:
+                            if feature1!=feature2 and ([feature2, feature1] and [feature1,feature2]) not in feature_pairs_dict.values():
+                                distance = feature1.distances[feature2]
+                            # ic(distance, max_dist)
+                                if distance <=max_dist and distance >= min_dist:
+                                    feature_pairs_dict[i] = [feature1, feature2]
+                                    i += 1
+
+        else:
+        '''                            
+
+        # find all features of feature1_type that have only one feature2 type within the max_dist
         i = 0
         for feature1 in self.features.values():
             if feature1.feature_type == feature1_type:
-                for feature2 in self.features.values():
-                    if feature1!=feature2 and [feature2, feature1] not in feature_pairs_dict.values():
-                        if feature2.feature_type == feature2_type:
+                dists = np.array(list(feature1.distances.values()))
+                feature2_ids = np.where(dists<=max_dist)[0] # indices of features within max_dist
+                feature2s = [list(feature1.distances.keys())[i] for i in feature2_ids] # features within max_dist
+                new_feature2s = [feature for feature in feature2s if feature.feature_type == feature2_type] # features within max dist that are of type feature2_type
+                for feature2 in new_feature2s:
+                    if feature1!=feature2:
+                        # create a sorted tuple of the pair to avoid double counting
+                        pair = tuple(sorted((feature1, feature2), key=lambda x: (x.coord[0], x.coord[1])))
+                        # check if the pair is already in the set
+                        if pair not in pairs_set:    
                             distance = feature1.distances[feature2]
-                           # ic(distance, max_dist)
                             if distance <=max_dist and distance >= min_dist:
                                 feature_pairs_dict[i] = [feature1, feature2]
+                                pairs_set.add(pair)
                                 i += 1
 
+        # now check there are no other features within the exclusion distance of the pair
+        # that are of the feature1_type or feature2_type
+        if exclusion_dist:
+            new_feature_pairs_dict = {}
+            for pair in feature_pairs_dict.keys():
+                feature1 = feature_pairs_dict[pair][0]
+                feature2 = feature_pairs_dict[pair][1]
+                dists1 = np.array(list(feature1.distances.values())) # distance of feature1 to all other features
+                dists2 = np.array(list(feature2.distances.values())) # distance of feature2 to all other features
+                feature1_neighbour_ids = np.where(dists1<exclusion_dist)[0] # all indices of features within exclusion_dist to feature1
+                feature2_neighbour_ids = np.where(dists2<exclusion_dist)[0]
+                feature1_neighbours = [list(feature1.distances.keys())[i] for i in feature1_neighbour_ids if list(feature1.distances.keys())[i].feature_type == feature2_type] # features of feature2_type within exclusion_dist of feature1
+                feature1_neighbours = [list(feature1.distances.keys())[i] for i in feature1_neighbour_ids if list(feature1.distances.keys())[i].feature_type == feature1_type] # features of feature1_type within exclusion_dist of feature1
+                feature2_neighbours = [list(feature2.distances.keys())[i] for i in feature2_neighbour_ids if list(feature2.distances.keys())[i].feature_type == feature2_type]
+                feature2_neighbours = [list(feature2.distances.keys())[i] for i in feature2_neighbour_ids if list(feature2.distances.keys())[i].feature_type == feature1_type]
+                if len(feature1_neighbours)<2 and len(feature2_neighbours)<2 and len(feature1_neighbours)<2 and len(feature2_neighbours)<2:
+                    new_feature_pairs_dict[pair] = [feature1, feature2]
+            feature_pairs_dict = new_feature_pairs_dict
+
+        #ic(feature_pairs_dict)
         if display_image:
             self.annotate_scan(feature_pairs_dict, [feature1_type, feature2_type], max_dist, min_dist)
 
         return feature_pairs_dict
 
-    def find_triplets(self, feature1_type, feature2_type, feature3_type, max_dist, min_dist, max_angle, min_angle, uniform_dist = False, display_image = False):
+    def find_triplets(self, feature1_type, feature2_type, feature3_type, max_dist, min_dist, max_angle, min_angle, exclusion_dist = False, uniform_dist = False, display_image = False):
         '''
         Finds triplets of features that are a certain distance from each other, with a certain angle between them.
         It also produces an image of the feature triplets labelled.
-        TODO: Also finds the angle between the features.
 
         Args:
             max_dist: the maximum wanted distance between two features (in nm)
             min_dist: the minimum wanted distance between two features (in nm)
             max_angle: the maximum wanted angle between the features (in degrees) (only 1 of the angles in the triangle formed by the triplet need to satisfy this condition)
             min_angle: the minimum wanted angle between the features (in degrees) (only 1 of the angles in the triangle formed by the triplet need to satisfy this condition)
+            exclusion_dist: if True, then it will exclude triplets of features that have some other feature of type [feature1_type, feature2_type]
+                            within the exclusion distance of them. (nm)
             uniform_dist: if True, the max_dist and min_dist are the same for all pairs of features. If False, then only
                           two of the pairs need to satisfy the distance condition.  
             feature1_type and feature2_type feature3_type: the types of feature. One of 'oneDB', 'twoDB', 'anomalies', 'As'
@@ -219,49 +275,122 @@ class Si_Scan(object):
 
         '''
 
-        # find all feature pairs that satisfy the distance condition from the first two feature types
-        feature_pairs_dict12 = self.find_pairs(feature1_type, feature2_type, max_dist, min_dist)
-
-        # now we want to find all features of the third type that are within the wanted distance of the first two features
         feature_triplets_dict = {}
         # set of triplets (used to avoid double counting)
         triplets_set = set()
 
         i = 0
-        for pair12 in feature_pairs_dict12.values():
+
+        '''
+        used to use this to find all triplets of features that satisfy the distance condition
+        but found a new way that is faster. Keeping this here in case some mistake new way shows itself
+        if not exclusion_dist:
+            # find all feature pairs that satisfy the distance condition from the first two feature types
+            feature_pairs_dict12 = self.find_pairs(feature1_type, feature2_type, max_dist, min_dist, exclusion_dist=exclusion_dist)
             for feature in self.features.values():
                 if feature.feature_type == feature3_type:
-                    if feature!=pair12[0] and feature!=pair12[1]:
+                    for pair12 in feature_pairs_dict12.values():
+                        if feature!=pair12[0] and feature!=pair12[1]:
+                            # create a sorted tuple of the triplet to avoid double counting
+                            triplet = tuple(sorted((pair12[0], pair12[1], feature), key=lambda x: (x.coord[0], x.coord[1])))               
+                            # check if the triplet is already in the set
+                            if triplet not in triplets_set:
+                                # find the angle between the features
+                                angles = self._find_triangle_angles(pair12[0].coord, pair12[1].coord, feature.coord)
+                                # check if angles are within the wanted range
+                                # only 1 of the angles in the triangle formed by the triplet need to satisfy the angle condition
+                                if angles[0] <= max_angle and angles[0] >= min_angle or angles[1] <= max_angle and angles[1] >= min_angle or angles[2] <= max_angle and angles[2] >= min_angle:    
+                                    # find distances
+                                    dist1 = pair12[0].distances[feature]
+                                    dist2 = pair12[1].distances[feature]    
+                                    # check if distances are within the wanted range
+                                    if not uniform_dist: # only 2 pairs need to satisfy the distance condition
+                                        if dist1 <= max_dist and dist1 >= min_dist or dist2 <= max_dist and dist2 >= min_dist:
+                                            feature_triplets_dict[i] = [pair12[0], pair12[1], feature]
+                                            triplets_set.add(triplet)
+                                            i += 1
+                                    else: # all 3 pairs need to satisfy the distance condition
+                                        if dist1 <= max_dist and dist1 >= min_dist and dist2 <= max_dist and dist2 >= min_dist:
+                                            feature_triplets_dict[i] = [pair12[0], pair12[1], feature]
+                                            triplets_set.add(triplet)
+                                            i += 1
+        '''
+
+    
+        for feature in self.features.values():
+            if feature.feature_type == feature3_type:
+                dists = np.array(list(feature.distances.values()))
+                feature2_ids = np.where(dists<max_dist)[0] # all indices of features within max_dist
+                features2 = [list(feature.distances.keys())[i] for i in feature2_ids] # features within max_dist
+                feature2_types = [feature2.feature_type for feature2 in features2] # types of features within max_dist
+                
+                if feature1_type == feature2_type:
+                    if feature2_types.count(feature2_type)==2:                             
+                        # Find all indices of feature2 type
+                        indices = [index for index, value in enumerate(feature2_types) if value == feature2_type]
+                        feature1 = features2[indices[0]]
+                        feature2 = features2[indices[1]]
+                    else:
+                        feature1 = False
+                else:
+                    if feature2_types.count(feature2_type)== 1 and feature2_types.count(feature1_type)==1: 
+                        feature1 = features2[feature2_types.index(feature1_type)]
+                        feature2 = features2[feature2_types.index(feature2_type)]
+                    else:
+                        feature1 = False
+
+                if feature1:
+                    if feature!=feature1 and feature!=feature2 and feature1!=feature2:
                         # create a sorted tuple of the triplet to avoid double counting
-                        triplet = tuple(sorted((pair12[0], pair12[1], feature), key=lambda x: (x.coord[0], x.coord[1])))               
+                        triplet = tuple(sorted((feature1, feature2, feature), key=lambda x: (x.coord[0], x.coord[1])))
                         # check if the triplet is already in the set
                         if triplet not in triplets_set:
                             # find the angle between the features
-                            angles = self._find_triangle_angles(pair12[0].coord, pair12[1].coord, feature.coord)
+                            angles = self._find_triangle_angles(feature1.coord, feature2.coord, feature.coord)
                             # check if angles are within the wanted range
                             # only 1 of the angles in the triangle formed by the triplet need to satisfy the angle condition
                             if angles[0] <= max_angle and angles[0] >= min_angle or angles[1] <= max_angle and angles[1] >= min_angle or angles[2] <= max_angle and angles[2] >= min_angle:    
                                 # find distances
-                                dist1 = pair12[0].distances[feature]
-                                dist2 = pair12[1].distances[feature]        
+                                dist1 = feature1.distances[feature]
+                                dist2 = feature2.distances[feature]       
                                 # check if distances are within the wanted range
-                                if not uniform_dist: # only 2 pairs need to satisfy the distance condition
+                                if not uniform_dist:
                                     if dist1 <= max_dist and dist1 >= min_dist or dist2 <= max_dist and dist2 >= min_dist:
-                                        feature_triplets_dict[i] = [pair12[0], pair12[1], feature]
+                                        feature_triplets_dict[i] = [feature1, feature2, feature]
                                         triplets_set.add(triplet)
                                         i += 1
                                 else: # all 3 pairs need to satisfy the distance condition
                                     if dist1 <= max_dist and dist1 >= min_dist and dist2 <= max_dist and dist2 >= min_dist:
-                                        feature_triplets_dict[i] = [pair12[0], pair12[1], feature]
+                                        feature_triplets_dict[i] = [feature1, feature2, feature]
                                         triplets_set.add(triplet)
                                         i += 1
-                            
+
+        if exclusion_dist:
+            new_feature_triplets_dict = {}
+            for triplet in feature_triplets_dict.keys():
+                for feature in feature_triplets_dict[triplet]: # check all three 
+                    dists = np.array(list(feature.distances.values()))
+                    feature_ids = np.where(dists<exclusion_dist)[0] # all indices of features within exclusion_dist
+                    features = [list(feature.distances.keys())[i] for i in feature_ids] # features within exclusion_dist
+                    feature_types = [feature.feature_type for feature in features] # types of features within exclusion_dist
+                    if feature_types.count(feature1_type)<2 and feature_types.count(feature2_type)<2 and feature_types.count(feature3_type)<2:
+                        new_feature_triplets_dict[triplet] = True # define true now, then redefine as the actual triplet after checking all features if it satisfies the exclusion condition
+                    else:
+                        new_feature_triplets_dict[triplet] = False
+                if new_feature_triplets_dict[triplet]:
+                    new_feature_triplets_dict[triplet] = feature_triplets_dict[triplet]
+                else:
+                    new_feature_triplets_dict.pop(triplet)
+            
+            feature_triplets_dict = new_feature_triplets_dict
+
+
         if display_image:
             self.annotate_scan(feature_triplets_dict, [feature1_type, feature2_type, feature3_type], max_dist, min_dist)
 
         return feature_triplets_dict
 
-    def annotate_scan(self, dict_ntuplets, features, max_dist, min_dist, fig_size = (10,10)):
+    def annotate_scan(self, dict_ntuplets, features, max_dist, min_dist, fig_size = (10,10), legend = True):
         """
         Produces a labelled image of the n-tuplet of features
         We draw on the image using PIL
@@ -272,6 +401,8 @@ class Si_Scan(object):
             features: the types of features that we are looking at. One of 'oneDB', 'twoDB', 'anomalies', 'As'
             max_dist: the maximum wanted distance between two features (in nm)
             min_dist: the minimum wanted distance between two features (in nm)
+            fig_size: size of figure to be displaye
+            legend: if true, include legend (sometimes want it without legend as it's too packed)
 
         Returns:
             Nothing
@@ -296,13 +427,21 @@ class Si_Scan(object):
                         if feature1!=feature2:
                             m = k+j # used to label the lines
                             y2, x2 = feature2.coord
-                            ax.plot([x1,x2], [y1,y2], color="white", linewidth=1, label = f'{i}.{m}: {round(feature1.distances[feature2],1)}nm')                
+        
+                            # define label depending on if its a pair or triplet
+                            if len(ntuplet)==2:
+                                labl = f'{i}'
+                            else:
+                                labl = f'{i}.{m}'
+
+                            ax.plot([x1,x2], [y1,y2], color="white", linewidth=1, label = f'{labl}: {round(feature1.distances[feature2],1)}nm')                
                             # Draw the text halfway between the two features
                             centre_coord = (np.array([y1,x1]) + np.array([y2,x2]))/2
                             while list(centre_coord) in centre_coords:
                                 centre_coord += np.array([15,0])
-                            ax.text(centre_coord[1], centre_coord[0], '{}.{}'.format(i, m), fontdict={'color': 'blue'}, size = 15) 
-                            ax.legend()
+                            ax.text(centre_coord[1], centre_coord[0], labl, fontdict={'color': 'blue'}, size = 15) 
+                            if legend:
+                                ax.legend()
                             centre_coords.append(list(centre_coord))
 
         #plt.savefig(scan_c, '{}_labelled_pairs_of_{}_{}'.format(self.scan, feature1, feature2))
@@ -316,17 +455,22 @@ class Si_Scan(object):
             # determine the number of subplots needed.
             # First, decide number of columns. Either 2 or 3 columns
             num_subplots = len(dict_ntuplets)
+        
             if num_subplots%3 == 0:
                 num_columns = 3
+                num_rows = num_subplots//num_columns
+            elif num_subplots%2 == 0:
+                num_columns = 2
+                num_rows = num_subplots//num_columns
             else:
                 num_columns = 2
-            num_rows = num_subplots//num_columns
-
+                num_rows = num_subplots//num_columns + 1 
+            
             # can't have 0 rows. If we do num_rows = num_subplots//num_columns+1 instead
             # we will have a blank row of subplots at the end if num_rows>0. So we do this instead
             if num_rows == 0:
                 num_rows = 1
-            
+        
             subplot_figsize = (2*fig_size[0], 2*fig_size[1])
             fig2, ax2 = plt.subplots(nrows = num_rows, ncols = num_columns, figsize=subplot_figsize)
 
@@ -347,7 +491,8 @@ class Si_Scan(object):
                                     # Draw the text halfway between the two features
                                     centre_coord = (np.array([y1,x1]) + np.array([y2,x2]))/2    
                                     ax2[nrow,ncol].text(centre_coord[1], centre_coord[0], '{}'.format(str(m)), fontdict={'color': 'blue'}, size = 15) 
-                                    ax2[nrow, ncol].legend()
+                                    if legend:
+                                        ax2[nrow, ncol].legend()
                                 else:
                                     ax2[ncol].imshow(scan_c[:,:,0], cmap='afmhot')
                                     y2, x2 = feature2.coord
@@ -355,7 +500,8 @@ class Si_Scan(object):
                                     # Draw the text halfway between the two features
                                     centre_coord = (np.array([y1,x1]) + np.array([y2,x2]))/2
                                     ax2[ncol].text(centre_coord[1], centre_coord[0], '{}'.format(str(m)), fontdict={'color': 'blue'}, size = 15) 
-                                    ax2[ncol].legend()
+                                    if legend:
+                                        ax2[ncol].legend()
                     
             #plt.savefig(scan_c, '{}_labelled_pairs_of_{}_{}'.format(self.scan, feature1, feature2))
             fig2.suptitle('{} features with separation between {}nm and {}nm'.format(features, min_dist, max_dist))
@@ -383,6 +529,7 @@ class Si_Scan(object):
         # convert to degrees
         angles = [angle1*180/np.pi, angle2*180/np.pi, angle3*180/np.pi]
         return angles
+
 
 
     def oneDhistogram(self, distances, edge, dr, density):
@@ -419,6 +566,10 @@ class Detector(object):
         self.UNETbright = UNET1
         self.UNETdark = UNET2
         self.UNETstep = UNET3
+
+        # legend dictionary corresponding to colours used in final segmentation
+        self.legend = {(0.8,0.7,0.7): 'background', (0,1,0): 'step edges', (0,0,1): 'dark feature', (0.4,0.4,0): 'single DB', (0.4,0,0.4): 'double DB', (0,0.4,0.4): 'anomalies', (1,1,1): 'close to DV', (1,0,0): 'cluster',  (1,1,0): 'As', }
+
     
     def norm1(self, array):
         '''
@@ -647,6 +798,8 @@ class Detector(object):
             scan_empty (npy array): empty state of the scan
             coord (list of floats): coordinate of the feature
             DVcoords (npy array): coordinates of the DVs in the scan
+        Returns:
+            prediction (int): the label of the feature            
         '''
 
         res = si_scan.res
@@ -682,36 +835,39 @@ class Detector(object):
             
         coord =  coord_f.copy() - self.crop_size
 
-        distances = np.sqrt(np.sum((coord-self.crop_size-DVcoords.T)**2, axis=1))
+        #distances = np.sqrt(np.sum((coord-self.crop_size-DVcoords.T)**2, axis=1))
+        #if (distances>min_dist).all():
+        # if you want to not include the ones that are too close to DVs then uncomment the above lines 
+        # and the last three in this method
 
-        if (distances>min_dist).all():
-            window = np.transpose(window, (0,3,1,2))
-            # normalise
-            window = self.norm1(window)
-            
-            self.windows.append(window)
 
-            if si_scan.As:
-               # for ensemble model
-                torch.manual_seed(0)
-                y = self.model_As(torch.tensor(window).float())
-            elif not si_scan.As:     
-                torch.manual_seed(0)
-                y = self.model_DB(torch.tensor(window).float())
-            prediction = torch.argmax(y)+1
-            if prediction == 1:
-                si_scan.feature_coords['oneDB'].append(coord-self.crop_size)
-            elif prediction == 2:
-                si_scan.feature_coords['twoDB'].append(coord-self.crop_size)
-            elif prediction == 3:
-                si_scan.feature_coords['anomalies'].append(coord-self.crop_size)
-            #elif prediction==4 it's lattice (i.e UNet probably made wrong prediction)
-            elif prediction == 5:
-                si_scan.feature_coords['As'].append(coord-self.crop_size)      
+        window = np.transpose(window, (0,3,1,2))
+        # normalise
+        window = self.norm1(window)
+        
+        self.windows.append(window)
 
-        else:
-            si_scan.feature_coords['closeToDV'].append(coord-self.crop_size)
-            prediction = 8 
+        if si_scan.As:
+            # for ensemble model
+            torch.manual_seed(0)
+            y = self.model_As(torch.tensor(window).float())
+        elif not si_scan.As:     
+            torch.manual_seed(0)
+            y = self.model_DB(torch.tensor(window).float())
+        prediction = torch.argmax(y)+1
+        if prediction == 1:
+            si_scan.feature_coords['oneDB'].append(coord-self.crop_size)
+        elif prediction == 2:
+            si_scan.feature_coords['twoDB'].append(coord-self.crop_size)
+        elif prediction == 3:
+            si_scan.feature_coords['anomalies'].append(coord-self.crop_size)
+        #elif prediction==4 it's lattice (i.e UNet probably made wrong prediction)
+        elif prediction == 5:
+            si_scan.feature_coords['As'].append(coord-self.crop_size)      
+
+        #else:
+        #    si_scan.feature_coords['closeToDV'].append(coord-self.crop_size)
+        #    prediction = 8 
             
         return y, prediction, coord-self.crop_size
 
@@ -754,7 +910,7 @@ class Detector(object):
                 
         # find dark features
         torch.manual_seed(0)
-        si_scan.mask_DV = self.UNET_predict(patches1, self.UNETdark, sqrt_num_patches, res, patch_res = win_size_def)
+        si_scan.mask_DV = self.UNET_predict(patches2, self.UNETdark, sqrt_num_patches2, res, patch_res = win_size_step)
     
         # find step edges
         torch.manual_seed(0)
@@ -846,10 +1002,12 @@ class Detector(object):
         unet_prediction = torch.reshape(unet_prediction, (sqrt_num_patches, sqrt_num_patches, 2, 1, patch_res, patch_res))
         prediction = torch.zeros((2, res, res))
         # To get rid of edge effects of the U-Net, we take smaller steps so each crop overlaps and then take an average over the crops
-        # takes a bit longer to compute but is more accurate
+        # takes a bit longer to compute but is more accurate. Mutiply by a hanning window to get rid of the edge effects too
+        hanning_1d = torch.hann_window(patch_res)
+        hanning_2d = hanning_1d.unsqueeze(0) * hanning_1d.unsqueeze(1)
         for i in range(sqrt_num_patches):
             for j in range(sqrt_num_patches):
-                prediction[:,i*step_size:(i*step_size)+patch_res, j*step_size:(j*step_size)+patch_res] = prediction[:,i*step_size:(i*step_size)+patch_res, j*step_size:(j*step_size)+patch_res] + unet_prediction[i,j,:,0,:,:]     
+                prediction[:,i*step_size:(i*step_size)+patch_res, j*step_size:(j*step_size)+patch_res] = prediction[:,i*step_size:(i*step_size)+patch_res, j*step_size:(j*step_size)+patch_res] + hanning_2d*unet_prediction[i,j,:,0,:,:]     
         unet_prediction = torch.argmax(prediction,dim=0)
         
         return unet_prediction.detach().numpy()
@@ -864,6 +1022,7 @@ class Detector(object):
         returns:
             output: numpy array of shape (res,res,3) with the different features labelled with
                     rgb encoding.
+            legend: dictionary with the rgb values as keys and the corresponding feature as values
         '''
         array = array.astype(np.uint8)
         res = array.shape[0]
@@ -888,15 +1047,15 @@ class Detector(object):
                 elif category == 5:
                     output[i,j,1] = 0.4
                     output[i,j,2] = 0.4
-                elif category == 8:
-                    output[i,j,0] = 1
                 elif category == 6:
                     output[i,j,0] = 1
                     output[i,j,1] = 1
                     output[i,j,2] = 1
                 elif category == 7:
                     output[i,j,0] = 1
-                    output[i,j,1] = 1
+                    output[i,j,1] = 1   
+                elif category == 8:
+                    output[i,j,0] = 1     
         return output
 
     '''

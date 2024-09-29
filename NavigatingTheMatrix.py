@@ -84,7 +84,6 @@ class STM(object):
         self.true_area = [0,0]
         '''
 
-
     def _open_file(self, file):
         '''
         Opens the file and returns a dictionary of the traces and retraces.
@@ -116,10 +115,10 @@ class STM(object):
             if self.standard_pix_ratio:
                 if nm_to_pix_ratio != self.standard_pix_ratio:
                     if nm_to_pix_ratio == 2*self.standard_pix_ratio:
-                        print('Pixel to nm ratio is twice as large as desired ', scan_, '. Pixels will be halved so that feature detection can be carried out on surface.')
+                        print('Pixel to nm ratio is twice as large as desired in', scan_, '. Pixels will be halved so that feature detection can be carried out on surface.')
                         im.data = im.data[::2,::2]
                     elif nm_to_pix_ratio == 4*self.standard_pix_ratio:
-                        print('Pixel to nm ratio is 4 times as large as desired ', scan_, '. Pixels will be quatered so that feature detection can be carried out on surface.')
+                        print('Pixel to nm ratio is 4 times as large as desired in', scan_, '. Pixels will be quatered so that feature detection can be carried out on surface.')
                         im.data = im.data[::4,::4]
                     else:
                         print('Pixel to nm ratio is ' + str(im.data.shape[0]) + 'pixels for every ' + str(width) + 'nm in the ', scan_)
@@ -231,6 +230,14 @@ class STM(object):
         the other scans with this corrected version.
         Uses the SIFT algorithm to find common points between trace and retrace.
 
+        General method here described in paper "A method to correct hysteresis of scanning probe microscope images based 
+        on a sinusoidal model" by Zhang et al with a couple of changes. Change 1: after we find matches with SIFT, we filter
+        them by requiring that the y displacement is no more than a pixel and the x displacement is +/- 15pixels (if res=512).
+        This is because SIFT found a lot of fake matches and an easy way to get rid of them is to filter by these requirements.
+        Change 2: we find the new pixel value (x_new = int(round(i + k3*np.sin(np.pi*i/res)/2,0))) has an extra factor of 1/2. 
+        I just found this works better.
+
+
         Parameters:
             trace (np.array): The trace of the scan.
             retrace (np.array): The retrace of the scan.
@@ -263,6 +270,7 @@ class STM(object):
 
         # Draw first 10 matches.
         #img3 = cv2.drawMatches(bmap1, kp1, bmap2, kp2, matches, None, flags=2)
+        #plt.imshow(img3), plt.show()
 
         # Now we have all the matches, we want to filter them. Not all of them are correct.
         # We filter by requiring that the y displacement is no more than a pixel and the 
@@ -282,7 +290,7 @@ class STM(object):
                     coord2s.append(coord2)
 
         # Draw first 10 matches.
-       # img4 = cv2.drawMatches(bmap1, kp1, bmap2, kp2, new_matches[:], None, flags=2)
+        img4 = cv2.drawMatches(bmap1, kp1, bmap2, kp2, new_matches[:], None, flags=2)
 
         if new_matches == []:
             print('No matches were found between trace and retrace. Hysteresis correction cannot be carried out.')
@@ -303,6 +311,7 @@ class STM(object):
         tracec = trace.copy()
         retracec = retrace.copy()
         
+        # first correct the retrace
         # correct hysterisis on scans that were not plane levelled/scan line aligned
         if up_down == 'trace up':
        #     unproc_tracec = self.trace_up
@@ -314,7 +323,7 @@ class STM(object):
             unproc_retracec = self.retrace_down.copy() # this will be the corrected version
         
         for i in range(res):
-            x_new = int(round(i - k3*np.sin(np.pi*i/res),0))
+            x_new = int(round(i - k3*np.sin(np.pi*i/res)/2,0))
             for j in range(res):
                 #print(i, x_new)
                 retracec[j,i] = retrace[j,x_new]
@@ -323,7 +332,30 @@ class STM(object):
             self.retrace_up = unproc_retracec
         if up_down == 'trace down':
             self.retrace_down = unproc_retracec
-            
+        
+        
+        # now correct the trace
+        # correct hysterisis on scans that were not plane levelled/scan line aligned
+        if up_down == 'trace up':
+       #     unproc_tracec = self.trace_up
+            unproc_trace = self.trace_up.copy()
+            unproc_tracec = self.trace_up.copy() # this will be the corrected version
+        elif up_down == 'trace down':
+       #     unproc_tracec = self.trace_down
+            unproc_trace = self.trace_down.copy()
+            unproc_tracec = self.trace_down.copy() # this will be the corrected version
+        
+        for i in range(res):
+            x_new = int(round(i + k3*np.sin(np.pi*i/res)/2,0))
+            for j in range(res):
+                #print(i, x_new)
+                tracec[j,i] = trace[j,x_new]
+                unproc_tracec[j,i] = unproc_trace[j,x_new]
+        if up_down == 'trace up':
+            self.trace_up = unproc_tracec
+        if up_down == 'trace down':
+            self.trace_down = unproc_tracec
+
         return tracec, retracec, True
     
     def save_scan(self, scan, trace_or_retrace, file=False):
@@ -369,170 +401,126 @@ class STM(object):
         else:
             return True
 
+def find_homography(img1, img2, threshold = 0.8, algorithm = 'SIFT', show_plot = False):
+    '''
+    Finds the homography matrix needed to align scan1 and scan2. 
+    It first find common points between the two scans using SIFT, then uses RANSAC to get rid of the bad matches 
+    and find the homography matrix.
 
-
-
-    """
-    Finds lattice parameters using FFT but is not very accurate atm.
-    Then goes on to find the true area of the scan.
-    def find_angle_lattice(self, up_down):
-        '''
-        Finds the lattice parameter and dimer row angle using an FFT.
-        If there's a step edge, it uses the two terraces to find the 2 lattice parameters and angle between them.
-        Otherwise, it takes an FFT of the empty state scan which is more likely to have atomic resolution.
-        Parameters:
-            up_down (str): Whether the scan is a trace up or trace down. Should be one of ['trace up', 'trace down'].
-        
-        '''
-        # find the lattice parameter and dimer row angle using an FFT
-        # if there's a step edge, it uses the two terraces to find the 2 lattice parameters and angle between them
-        # otherwise, it takes an FFT of the empty state scan which is more likely to have atomic resolution.
-        # up_down = ('trace up', 'trace down')
-        # this should be used after hysteresis correction (on the processed scan) for more accurate results
-
-        if up_down == 'trace up':
-            res = self.trace_up.shape[1]
-            fft = abs(np.fft.fftshift(np.fft.fft2(self.retrace_up)))
-        else:
-            res = self.retrace_down.shape[1]
-            fft = abs(np.fft.fftshift(np.fft.fft2(self.retrace_down)))
-
-        freq_x  = np.fft.fftfreq(res, d=1) # possible frequencies (same in x and y dir)
-        
-        # make a mask to cover up the noise and peaks we don't want in the FT
-        Y, X = np.ogrid[:res, :res]
-        centre = [res//2, res//2]
-        distances = np.sqrt( (centre[0]-Y)**2 + (centre[1]-X)**2 )
-        fft_mask = distances>(0.22*res)
-    # print(fft_mask.shape)
-        #fft_mask[int(0.33*res):int(0.67*res),int(0.33*res):int(0.67*res)] = 0
-        fft_mask[:, int(0.4*res):int(0.6*res)] = 0
-        fft_mask[int(0.4*res):int(0.6*res), :] = 0
-        fft_proc = fft*fft_mask
-        # apply a gaussian filter to get rid of noise
-        sigma = res*0.003
-        fft_proc = gaussian_filter(fft_proc, [sigma, sigma], mode='constant')
-        #plt.imshow(fft_proc), plt.show()
-
-        # find the peak for one direction of the dimer rows
-        # print(fft_proc.shape, res, fft.shape, fft_mask.shape)
-        fft_max = np.array(np.unravel_index(np.argmax(fft_proc), (res,res)))
-        #  print('fft_max ', fft_max)
-        fft_max_shifted = [res//2,res//2]-fft_max
-        fft_max_normalised = freq_x.max()*fft_max_shifted/(res//2)
-
-        # put all peaks in direction to 0 by making the whole quadrant 0.
-        # also make the opposite quadrant 0 so the next maximum is in the direction
-        # of the other lattice vector
-        # print(fft_max)
-        if (fft_max > [res//2, res//2]).all() or (fft_max < [res//2, res//2]).all():
-            # it's in the top LHS corner and bottom RHS corner
-            fft_mask[:res//2, :res//2] = 0
-            fft_mask[res//2:, res//2:] = 0
-        else:
-            # it's in the top RHS corner and bottom LHS corner
-            fft_mask[:res//2,res//2:] = 0
-            fft_mask[res//2:,:res//2] = 0
-        
-        fft_proc = fft_proc*fft_mask
-        #plt.imshow(fft_proc),plt.show()
-
-        # find the peak for the dimers (that should be) perpendicular to the ones we just found
-        fft_max2 = np.array(np.unravel_index(np.argmax(fft_proc), (res,res)))
+    Args:
+    img1 (numpy.ndarray): First scan. If one scans smaller than the other (in nm), this should be the smaller scan for better results.
+    img2 (numpy.ndarray): Second scan
+    threshold (float): Threshold for the Lowe's ratio test. Default is 0.8
+    show_plot (bool): Whether to plot the matches and the homography transformation
+    algorithm (str): Which algorithm to use for feature matching. 'SIFT' or 'AKAZE' only
     
-        fft_max2_shifted = [res//2,res//2]-fft_max2 # shift so middle is (0,0)
-        fft_max2_normalised = freq_x.max()*fft_max2_shifted/(res//2) 
+    returns:
+    H (numpy.ndarray): Homography matrix
+    mask (numpy.ndarray): Mask of inliers
+    '''
+
+    # max/min normalise the images
+    img1 = (img1 - np.min(img1))/(np.max(img1)-np.min(img1))
+    img2 = (img2 - np.min(img2))/(np.max(img2)-np.min(img2))
+
+    # change their resolution to the same
+    if img1.shape != img2.shape:
+        img1 = cv2.resize(img1, (img2.shape[1], img2.shape[0]))
+                                     
+    # we need to use the OpenCV SIFT algorithm which needs the scan in a certain format
+    sift_scan1 = cv2.normalize(img1, None, 0, 255, cv2.NORM_MINMAX).astype('uint8')
+    sift_scan2 = cv2.normalize(img2, None, 0, 255, cv2.NORM_MINMAX).astype('uint8')
+
+    if algorithm == 'SIFT':
+        # create sift object
+        sift = cv2.SIFT_create() 
+        # find keypoints and descriptors
+        kp1, des1 = sift.detectAndCompute(sift_scan1, None)
+        kp2, des2 = sift.detectAndCompute(sift_scan2, None)
+
+        bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+        # Match descriptors.
+        matches = bf.match(des1,des2)
+
+        FLANN_INDEX_KDTREE = 1
+        index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
+        search_params = dict(checks = 50)
         
-        x,y = (fft_max-[res//2,res//2])
+        flann = cv2.FlannBasedMatcher(index_params, search_params)
+        
+        matches = flann.knnMatch(des1,des2,k=2)
+
+    elif algorithm == 'AKAZE':
+        # creat akaze object
+        akaze = cv2.AKAZE_create()
+         # find keypoints and descriptors
+        kp1, des1 = akaze.detectAndCompute(sift_scan1, None)
+        kp2, des2 = akaze.detectAndCompute(sift_scan2, None)
+        
+        matcher = cv2.DescriptorMatcher_create(cv2.DescriptorMatcher_BRUTEFORCE_HAMMING)
+        matches = matcher.knnMatch(des1, des2, k=2)
+
+    else: 
+        raise ValueError('algorithm should be either SIFT or AKAZE')
+
+    # store all the good matches as per Lowe's ratio test.
+    # i.e. each match has two points its matched with. If the second point is much further than the first
+    # (in terms of their feature vectors), then the first match isn't ambiguous and should be kept.
+    good = []
+    for m,n in matches:
+        if m.distance < threshold*n.distance:
+            good.append(m)
+
+    # draw matches
+    if show_plot:
+        plot = cv2.drawMatches(sift_scan1, kp1, sift_scan2, kp2, good, None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+        plt.imshow(plot, cmap='afmhot')
+        plt.title('All matches')
+        plt.show()
     
-        dist = np.sqrt( np.sum(fft_max_normalised**2))
-        theta = np.arctan(x/y)#*180/np.pi
-        
-        x2,y2 = (fft_max2-[res//2,res//2])
-        dist2 = np.sqrt( np.sum(fft_max2_normalised**2))
-        theta2 = np.arctan(x2/y2)#*180/np.pi
-        
-        print('angle between dimer rows is: ', np.max( [theta-theta2, theta2-theta] ))
+    # find keypoints in image 2 that have multiple matches in image 1 and keep only the best one
+    repeated_kps = {}
+    for m in good:
+        if m.trainIdx not in repeated_kps:
+            repeated_kps[m.trainIdx] = [m]
+        else:
+            repeated_kps[m.trainIdx].append(m)
+    
+    # Sort the repeated_kps and keep only the best match
+    for k, v in repeated_kps.items():
+        repeated_kps[k] = sorted(v, key=lambda x: x.distance)
 
-        dimer_row_angle1 = theta
-        lattice_const1 = 1/dist
-        dimer_row_angle2 = theta2
-        lattice_const2 = 1/dist2
-       # print('lat const 1, lat const 2 ' , lattice_const1, lattice_const2)
+    # Remove all but the best match
+    unique_good = []
+    for k, v in repeated_kps.items():
+        unique_good.append(v[0])  # Keep only the best match
         
-        # if lattice const is less than ~2.3 then we've worked out the space between two hydrogen atoms on the 
-        # same dimer. Double it so it's length between dimer rows for consistency
-        if lattice_const1<2.3:
-            lattice_const1 = lattice_const1*2
-        if lattice_const2<2.3:
-            lattice_const2 = lattice_const2*2
-        self.angle_between_dimer_rows = np.max( [theta-theta2, theta2-theta] )
+    # draw matches
+    if show_plot:
+        plot = cv2.drawMatches(sift_scan1, kp1, sift_scan2, kp2, unique_good, None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+        plt.imshow(plot, cmap='afmhot')
+        plt.title('Unique matches')
+        plt.show()
+    
 
-        # NOTE: we know the 2 lattice constants and angle between them but not the directions of the 
-        #       dimer rows around each feature. This needs to be found separately for each feature.
+    # use Ransac to get rid of the rest of the bad matches
+    src_pts = np.float32([kp1[m.queryIdx].pt for m in unique_good]).reshape(-1, 1, 2)
+    dst_pts = np.float32([kp2[m.trainIdx].pt for m in unique_good]).reshape(-1, 1, 2)
 
-        if up_down == 'trace up':
-            self.trace_up_lat_param = { 'angle 1': dimer_row_angle1, 'lattice const 1': lattice_const1, 'angle 2': dimer_row_angle2,
-                                        'lattice const 2': lattice_const2}
-        if up_down == 'trace down':
-            self.trace_down_lat_param = { 'angle 1': dimer_row_angle1, 'lattice const 1': lattice_const1, 'angle 2': dimer_row_angle2,
-                                        'lattice const 2': lattice_const2}
-        #print('trace up:', self.trace_up_lat_param)
-        #print('trace down:', self.trace_down_lat_param)
+    H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5)
 
-        print('The two lattice constants are' , lattice_const1, lattice_const2, ' pix.')
-        print('The two angles are ', dimer_row_angle1*180/np.pi, dimer_row_angle2*180/np.pi)        
-    def calc_true_area(self, up_down):
-        # w.l.o.g we can assume one side is x and the other y
-        # we use c^2 = a^2 + b^2 - 2ab*cos(theta)
-        
-        if up_down == 'trace up':
-            # trace up
-            a = self.trace_up_lat_param['lattice const 1']
-            a_theta = abs(self.trace_up_lat_param['angle 1'])
-            b = self.trace_up_lat_param['lattice const 2']
-            b_theta = abs(self.trace_up_lat_param['angle 2'])
-        if up_down == 'trace down':
-            # trace down
-            a = self.trace_down_lat_param['lattice const 1'] # this is 0.768nm
-            a_theta = abs(self.trace_down_lat_param['angle 1'])
-            b = self.trace_down_lat_param['lattice const 2'] # this is 0.768nm
-            b_theta = abs(self.trace_down_lat_param['angle 2'])
-        
-        
-        # decompose each into x and y components
-        a_x = a*np.sin(a_theta)
-        a_x_real = 0.768*np.sin(a_theta) # length of a_x in nm
-        a_y = a*np.cos(a_theta)
-        a_y_real = 0.768*np.cos(a_theta) # in nm
-        b_x = b*np.sin(b_theta)
-        b_x_real = 0.768*np.sin(b_theta) # in nm
-        b_y = b*np.cos(b_theta)
-        b_y_real = 0.768*np.cos(b_theta) # in nm
-        #print( 'ax' , a_x, 'ay', a_y, 'bx', b_x,'by', b_y, 'at', a_theta, 'bt', b_theta, 'axr', a_x_real, 'ayr', a_y_real, 'bxr', b_x_real, 'byr', b_y_real) # these thetas are larger
-        # take average of the two
-        c_x = 0.5 * (a_x + b_x)
-        c_x_real = 0.5 * (a_x_real + b_x_real)
-        c_y = 0.5 * (a_y + b_y)
-        c_y_real = 0.5 * (a_y_real + b_y_real)
-        # c_y and c_x are in pixels, but we know what each should correspond to in nm
-        pix_to_nm_ratio_x = c_x_real/c_x
-        pix_to_nm_ratio_y = c_y_real/c_y
-        # print('shape ', self.trace_up.shape)
-           
-        if up_down == 'trace up':
-            true_length_x = pix_to_nm_ratio_x * self.trace_up.shape[1]
-            true_length_y = pix_to_nm_ratio_y * self.trace_up.shape[0]
-          #  print('shape', self.trace_up.shape)
-            print('true lengths ', true_length_x, true_length_y, 'old length ', self.width)
-            area_up = true_length_x * true_length_y
-            self.true_area[0] = area_up
-        if up_down == 'trace down':
-            true_length_x = pix_to_nm_ratio_x * self.trace_down.shape[1]
-            true_length_y = pix_to_nm_ratio_y * self.trace_down.shape[0]
-           # print('shape', self.trace_down.shape)
-            print('true lengths ', true_length_x, true_length_y, 'old length ', self.width)
-            area_down = true_length_x * true_length_y
-            self.true_area[1] = area_down
-    """
+    matchesMask = mask.ravel().tolist()
 
+    h,w = sift_scan1.shape
+    pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
+    dst = cv2.perspectiveTransform(pts,H)
+    if show_plot:
+        plot2 = cv2.polylines(np.copy(sift_scan2),[np.int32(dst)],True,255,3, cv2.LINE_AA)
+        draw_params = dict(matchColor = (0,255,0), # draw matches in green color
+                   singlePointColor = None,
+                   matchesMask = matchesMask, # draw only inliers
+                   flags = 2)
+        plot3 = cv2.drawMatches(sift_scan1,kp1, plot2, kp2, unique_good ,None,**draw_params)
+        plt.imshow(plot3, cmap='afmhot'), plt.title('Final matches'), plt.show()
+    
+    return H, mask
