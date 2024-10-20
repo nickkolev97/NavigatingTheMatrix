@@ -583,7 +583,6 @@ class Detector(object):
         # legend dictionary corresponding to colours used in final segmentation
         self.legend = {(0.8,0.7,0.7): 'background', (0,1,0): 'step edges', (0,0,1): 'dark feature', (0.4,0.4,0): 'single DB', (0.4,0,0.4): 'double DB', (0,0.4,0.4): 'anomalies', (1,1,1): 'close to DV', (1,0,0): 'cluster',  (1,1,0): 'As', }
 
-    
     def norm1(self, array):
         '''
         recentre mean to 0. Used for the window classifiers
@@ -1042,40 +1041,25 @@ class Detector(object):
                     rgb encoding.
             legend: dictionary with the rgb values as keys and the corresponding feature as values
         '''
-        array = array.astype(np.uint8)
-        res = array.shape[0]
-        output = np.zeros((res,res,3))
-        for i in range(res):
-            for j in range(res):
-                category = np.argmax(array[i,j,:])
-                if category == 0:
-                    output[i,j,1] = 0.7
-                    output[i,j,2] = 0.7
-                    output[i,j,0] = 0.8
-                elif category == 1:
-                    output[i,j,1] = 1
-                elif category == 2:
-                    output[i,j,2] = 1
-                elif category == 3:
-                    output[i,j,0] = 0.4
-                    output[i,j,1] = 0.4
-                elif category == 4:
-                    output[i,j,0] = 0.4
-                    output[i,j,2] = 0.4
-                elif category == 5:
-                    output[i,j,1] = 0.4
-                    output[i,j,2] = 0.4
-                elif category == 6:
-                    output[i,j,0] = 1
-                    output[i,j,1] = 1
-                    output[i,j,2] = 1
-                elif category == 7:
-                    output[i,j,0] = 1
-                    output[i,j,1] = 1   
-                elif category == 8:
-                    output[i,j,0] = 1     
-        return output
+        # Define the mapping from categories to RGB colors
+        category_to_rgb = np.array([[150, 50, 50],  # red-orange
+                                    [0, 255, 0],    # Green
+                                    [0, 0, 255],    # Blue
+                                    [255, 255, 0],  # Yellow
+                                    [0, 255, 255],  # Cyan
+                                    [255, 0, 255],  # Magenta
+                                    [255, 255, 255],# White
+                                    [0, 0, 0]       # Black
+                                ], dtype=np.uint8)
 
+        # Get the category indices from the one-hot encoded array
+        category_indices = np.argmax(array, axis=-1)
+
+        # Map the category indices to RGB colors
+        output = category_to_rgb[category_indices]
+
+        return output
+    
     '''
     def density_calc(self, As):
         # 3rd item in output are the coordinates
