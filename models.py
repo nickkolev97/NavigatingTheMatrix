@@ -51,7 +51,7 @@ class upsample_m(nn.Module):
     # upsample
     x = self.convTranspose(x)
     # concatenate with the skip
-    x = torch.concatenate([x, skip], axis=1)
+    x = torch.cat([x, skip], axis=1)
     # dropout
     x = nn.Dropout(0.3)(x)
     # double convolution
@@ -153,7 +153,7 @@ class upsample(nn.Module):
     # upsample
     x = self.convTranspose(x)
     # concatenate with the skip
-    x = torch.concatenate([x, skip], axis=1)
+    x = torch.cat([x, skip], axis=1)
     # double convolution
     x = self.doubleConv(x)
     return x
@@ -255,7 +255,7 @@ class upsample(nn.Module):
     # upsample
     x = self.convTranspose(x)
     # concatenate with the skip
-    x = torch.concatenate([x, skip], axis=1)
+    x = torch.cat([x, skip], axis=1)
     # double convolution
     x = self.doubleConv(x)
     return x

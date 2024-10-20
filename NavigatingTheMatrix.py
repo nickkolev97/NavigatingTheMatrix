@@ -23,10 +23,9 @@ class STM(object):
         data (dict): A dictionary of the traces and retraces.
         trace/retrace_up/down (np.array): The trace/retrace of the up/down scan.
         trace/retrace_up/down_proc (np.array): The processed trace/retrace of the up/down scan.
-        steps_present (bool): Whether there are steps present in the image.
         standard_pix_ratio (bool or float): The standard pixel ratio. False if you don't want the pixels to be downsampled, or the ratio if you do want it downsampled (num_pix/nm e.g. 512/100).
     '''
-    def __init__(self, file, y_offset, x_offset, angle, steps_present = False, standard_pix_ratio=False):
+    def __init__(self, scan_dict, from_file=True):
         """
         The constructor for the STM class.
 
@@ -35,54 +34,79 @@ class STM(object):
             y_offset (float): The y-offset for the image.
             x_offset (float): The x-offset for the image.
             angle (float): The angle of the image.
-            steps_present (bool): Whether there are steps present in the image.
             standard_pix_ratio (bool or float): The standard pixel ratio. False if you don't want the pixels to be downsampled, or the ratio if you do want it downsampled (num_pix/nm e.g. 512/100).
+            from_file (bool): Whether to load the data from the file. If False, the data will be loaded from the dictionary.
+            scan_dict (dict): The dictionary of the scan + metadata. Only used if from_file is False.
         """
 
-        self.file = file
-       
-        # width and height get defined in self._open_file
-        # they are in nm
-        self.width = None
-        self.height = None
-        self.step_present = steps_present
-        self.standard_pix_ratio = standard_pix_ratio 
-        # open the topography file using access to the matrix. It is returned as a dictionary of the traces and retraces
-        self.data = self._open_file(file)
-        
-        self.trace_up = self.data[0][::-1,:]
-        # assumes the second scan will always be the retrace (i.e. we never have just an trace up and trace down with no retraces)
-        if 1<len(self.data)<5:
-            self.retrace_up = self.data[1][::-1,:]
-        if 2<len(self.data)<5:
-            self.trace_down = self.data[2][::-1,:]
-        if len(self.data)==4:
-            self.retrace_down = self.data[3][::-1,:]
+        if from_file:
+            self.file = scan_dict['file']
+            # width and height get defined in self._open_file
+            # they are in nm
+            self.width = None
+            self.height = None
+            self.standard_pix_ratio = scan_dict['standard_pix_ratio'] 
+            # open the topography file using access to the matrix. It is returned as a dictionary of the traces and retraces
+            self.data = self._open_file(self.file)
+            
+            self.trace_up = self.data[0][::-1,:]
+            # assumes the second scan will always be the retrace (i.e. we never have just an trace up and trace down with no retraces)
+            if 1<len(self.data)<5:
+                self.retrace_up = self.data[1][::-1,:]
+            if 2<len(self.data)<5:
+                self.trace_down = self.data[2][::-1,:]
+            if len(self.data)==4:
+                self.retrace_down = self.data[3][::-1,:]
 
-        # these will be used to store the processed data
-        self.trace_up_proc = None
-        self.retrace_up_proc = None
-        self.trace_down_proc = None
-        self.retrace_down_proc = None
-        
-        self.size = np.asarray([self.width, self.height])
-        self.y_offset = y_offset
-        self.x_offset = x_offset
-        self.angle = angle
+            # these will be used to store the processed data
+            self.trace_up_proc = None
+            self.retrace_up_proc = None
+            self.trace_down_proc = None
+            self.retrace_down_proc = None
+            
+            self.size = np.asarray([self.width, self.height])
+            if 'y offset' in scan_dict:
+                self.y_offset = scan_dict['y_offset']
+            if 'x offset' in scan_dict:
+                self.x_offset = scan_dict['x_offset']
+            if 'angle' in scan_dict:
+                self.angle = scan_dict['angle']
+                
 
+            '''
+            Working progress on trying to get the true area of the scan by using FFTs to find lattice parameters.
+            # get the lattice parameters for the different traces
+            # we use the unprocessed scans since their FFTs have less noise around 0.
+            self.trace_up_lat_param = { 'angle 1': None ,'lattice const 1': None, 'angle 2': None,
+                                        'lattice const 2': None}
+            self.trace_down_lat_param = { 'angle 1': None ,'lattice const 1': None, 'angle 2': None,
+                                        'lattice const 2': None}      
+            # Calculate the true area in nm^2 using the lattice constants worked out.
+            # It'll be a list. 0th element true are of trace up, 1st true area of trace down. 
+            self.true_area = [0,0]
+            '''
+        else:
+            if 'trace up' in scan_dict:
+                self.trace_up = scan_dict['trace up']
+                self.retrace_up = scan_dict['retrace up']
+            elif 'trace down' in scan_dict:
+                self.trace_down = scan_dict['trace down']
+                self.retrace_down = scan_dict['retrace down']
+            else:
+                raise ValueError('scan_dict should have either trace up or trace down')
+            if 'width' in scan_dict and 'height' in scan_dict:
+                self.size = np.asarray([scan_dict['width'], scan_dict['height']])
+            if 'y offset' in scan_dict:
+                self.y_offset = scan_dict['y_offset']
+            if 'x offset' in scan_dict:
+                self.x_offset = scan_dict['x_offset']
+            if 'angle' in scan_dict:
+                self.angle = scan_dict['angle']
+            if 'width' in scan_dict:
+                self.width = scan_dict['width']
+            if 'height' in scan_dict:
+                self.height = scan_dict['height']
 
-        '''
-        Working progress on trying to get the true area of the scan by using FFTs to find lattice parameters.
-        # get the lattice parameters for the different traces
-        # we use the unprocessed scans since their FFTs have less noise around 0.
-        self.trace_up_lat_param = { 'angle 1': None ,'lattice const 1': None, 'angle 2': None,
-                                    'lattice const 2': None}
-        self.trace_down_lat_param = { 'angle 1': None ,'lattice const 1': None, 'angle 2': None,
-                                    'lattice const 2': None}      
-        # Calculate the true area in nm^2 using the lattice constants worked out.
-        # It'll be a list. 0th element true are of trace up, 1st true area of trace down. 
-        self.true_area = [0,0]
-        '''
 
     def _open_file(self, file):
         '''
@@ -255,8 +279,8 @@ class STM(object):
         bmap1 = cv2.normalize(trace, None, 0, 255, cv2.NORM_MINMAX).astype('uint8')
         bmap2 = cv2.normalize(retrace, None, 0, 255, cv2.NORM_MINMAX).astype('uint8')
         # use SIFT
-        sift = cv2.SIFT_create()
-        kp1, des1 = sift.detectAndCompute(bmap1, None)
+        sift = cv2.SIFT_create(contrastThreshold=0.00001, edgeThreshold=100000)
+        kp1, des1 = sift.detectAndCompute(bmap1, None,)
         kp2, des2 = sift.detectAndCompute(bmap2, None)
 
         # create BFMatcher object
@@ -433,7 +457,7 @@ def find_homography(img1, img2, threshold = 0.8, algorithm = 'SIFT', show_plot =
 
     if algorithm == 'SIFT':
         # create sift object
-        sift = cv2.SIFT_create() 
+        sift = cv2.SIFT_create(contrastThreshold=0.001, edgeThreshold=100) 
         # find keypoints and descriptors
         kp1, des1 = sift.detectAndCompute(sift_scan1, None)
         kp2, des2 = sift.detectAndCompute(sift_scan2, None)

@@ -49,10 +49,19 @@ model5.eval()
 ############################################################################################
 
 class Feature(object):
+    '''
+    An object that contains information about a feature on a scan.
+    Attributes:
+        scan (Si_scan): the scan the feature is on
+        coord (numpy array): the coordinates of the feature in the scan
+        feature_type (str): the type of feature. One of ['oneDB', 'twoDB', 'anomalies', 'As']
+        distances (dict): dictionary with distances to other features on the scan
+                          key = feature, value = distance in nm
+    '''
     # create a class for for each feature
     def __init__(self, scan, coord, feature_type):
         self.scan = scan
-        self.coord = coord
+        self.coord = coord 
         self.feature_type = feature_type # feature type is one of oneDB', 'twoDB', 'anomalies', 'As'
 
         # dictionary with distances to other features on the scan
@@ -75,7 +84,7 @@ class Si_Scan(object):
         trace (str): Trace up or trace down of scan. One of ['trace up', 'trace down']
         mask_xxx: mask for the different features (1DB, 2DB, anomalies, As, close to DVs, etc)
         feature_coords: dictionary with lists of coordinates of the different features
-        As: True if the scan is done after exposure to AsH3
+        As (bool): True if the scan is done after exposure to AsH3
         num_features: number of features in the scan
         features: dictionary with information about each feature in the scan.
                   key = feature n: value = Feature instance
@@ -86,9 +95,9 @@ class Si_Scan(object):
                            the y coord, x coord, prob of 1DB, prob of 2DB, prob of anomaly 
                            (,prob of As feature if present), var of prob1DB, var of prob2DB,
                             var of prob An, (var of prob As) for that feature.
-        classes: number of classes in the classifier (4 if no As, 5 if As)
+        classes (int): number of classes in the classifier (4 if no As, 5 if As)
         output: output from Detector object
-        rgb: rgb segmented image of the scan
+        rgb (numpy array): rgb segmented image of the scan
         res: resolution of the scan in pixels (assumes it's square)
 
         '''
@@ -100,18 +109,19 @@ class Si_Scan(object):
             self.scan = np.stack( [STMScan.trace_down_proc, STMScan.retrace_down_proc], axis=-1 )
     
         self.trace = trace
-        self.res = (self.scan.shape)[0]
-        self.size = STMScan.size[0] # assume height=width
+        self.yres, self.xres = self.scan.shape[:2]
+        self.width = STMScan.width 
+        self.height = STMScan.height
 
         self.mask_step_edges = None
         self.mask_DV = None
         self.mask_bright_features = None
-        self.mask_1DB = np.zeros((self.res,self.res))
-        self.mask_2DB = np.zeros((self.res,self.res))
-        self.mask_An = np.zeros((self.res,self.res))
-        self.mask_CDV = np.zeros((self.res,self.res)) # features too close to DVs
+        self.mask_1DB = np.zeros((self.yres,self.xres))
+        self.mask_2DB = np.zeros((self.yres,self.xres))
+        self.mask_An = np.zeros((self.yres,self.xres))
+        self.mask_CDV = np.zeros((self.yres,self.xres)) # features too close to DVs
         if As:
-            self.mask_As = np.zeros((self.res,self.res))
+            self.mask_As = np.zeros((self.yres,self.xres))
 
         self.num_features = None
         self.As = As
@@ -131,7 +141,7 @@ class Si_Scan(object):
             self.coords_probs_vars = np.zeros( (1,8) )
             self.classes = 4
 
-        print('Resolution of image is '+str(self.res))
+        print('Resolution of image is {} by {}'.format(self.xres, self.yres))
         self.one_hot_segmented = None
         self.rgb = None
 
@@ -158,7 +168,7 @@ class Si_Scan(object):
                     if feature2.feature_type != 'anomalies' and feature2.feature_type != 'closeToDV':
                         if feature1!=feature2:
                             #ic(feature1.coord, feature2.coord)
-                            dist = np.sqrt(np.sum( (feature2.coord-feature1.coord)**2 ) )*self.size/self.res
+                            dist = np.sqrt(np.sum( (feature2.coord-feature1.coord)**2 ) )*self.width/self.xres
                             #ic(dist)
                             feature1.distances[feature2] = dist
         
@@ -239,10 +249,14 @@ class Si_Scan(object):
                 dists2 = np.array(list(feature2.distances.values())) # distance of feature2 to all other features
                 feature1_neighbour_ids = np.where(dists1<exclusion_dist)[0] # all indices of features within exclusion_dist to feature1
                 feature2_neighbour_ids = np.where(dists2<exclusion_dist)[0]
-                feature1_neighbours = [list(feature1.distances.keys())[i] for i in feature1_neighbour_ids if list(feature1.distances.keys())[i].feature_type == feature2_type] # features of feature2_type within exclusion_dist of feature1
-                feature1_neighbours = [list(feature1.distances.keys())[i] for i in feature1_neighbour_ids if list(feature1.distances.keys())[i].feature_type == feature1_type] # features of feature1_type within exclusion_dist of feature1
-                feature2_neighbours = [list(feature2.distances.keys())[i] for i in feature2_neighbour_ids if list(feature2.distances.keys())[i].feature_type == feature2_type]
-                feature2_neighbours = [list(feature2.distances.keys())[i] for i in feature2_neighbour_ids if list(feature2.distances.keys())[i].feature_type == feature1_type]
+                feature1_neighbours = [list(feature1.distances.keys())[i] for i in feature1_neighbour_ids 
+                                       if list(feature1.distances.keys())[i].feature_type == feature2_type] # features of feature2_type within exclusion_dist of feature1
+                feature1_neighbours = [list(feature1.distances.keys())[i] for i in feature1_neighbour_ids 
+                                       if list(feature1.distances.keys())[i].feature_type == feature1_type] # features of feature1_type within exclusion_dist of feature1
+                feature2_neighbours = [list(feature2.distances.keys())[i] for i in feature2_neighbour_ids 
+                                       if list(feature2.distances.keys())[i].feature_type == feature2_type]
+                feature2_neighbours = [list(feature2.distances.keys())[i] for i in feature2_neighbour_ids 
+                                       if list(feature2.distances.keys())[i].feature_type == feature1_type]
                 if len(feature1_neighbours)<2 and len(feature2_neighbours)<2 and len(feature1_neighbours)<2 and len(feature2_neighbours)<2:
                     new_feature_pairs_dict[pair] = [feature1, feature2]
             feature_pairs_dict = new_feature_pairs_dict
@@ -531,7 +545,6 @@ class Si_Scan(object):
         return angles
 
 
-
     def oneDhistogram(self, distances, edge, dr, density):
         nbins = edge//dr
         histogram = np.histogram(distances, bins = nbins)
@@ -719,7 +732,7 @@ class Detector(object):
         segmented =  (si_scan.mask_bright_features).astype(np.uint8)
 
         area_per_feature = np.pi*radius**2
-        res = si_scan.res
+        res = si_scan.xres
 
         # find number of features in scan
         connected_comps = cv2.connectedComponentsWithStats( segmented )
@@ -802,7 +815,7 @@ class Detector(object):
             prediction (int): the label of the feature            
         '''
 
-        res = si_scan.res
+        res = si_scan.xres
         # for each feature coord, find distance from the DVs
         min_dist = (3/512)*res
         
@@ -846,7 +859,8 @@ class Detector(object):
         window = self.norm1(window)
         
         self.windows.append(window)
-
+        #plt.imshow(window[0,0,:,:], cmap='afmhot')
+        #plt.show()
         if si_scan.As:
             # for ensemble model
             torch.manual_seed(0)
@@ -871,7 +885,7 @@ class Detector(object):
             
         return y, prediction, coord-self.crop_size
 
-    def predict(self, si_scan, As, win_size_def=32, win_size_step=64):
+    def predict(self, si_scan, win_size_def=32, win_size_step=64):
         '''
         Outputs a fully segmented image of the scan.
 
@@ -884,8 +898,9 @@ class Detector(object):
         '''
         
         self.windows = []
-        res = si_scan.res
+        res = si_scan.xres
         array = si_scan.scan[:,:,0].copy()
+        As = si_scan.As
 
         # max/min normalise
         array = (array-np.min(array))/(np.max(array)-np.min(array))
@@ -930,10 +945,13 @@ class Detector(object):
                     unet_prediction3[labels == i] = 0 
 
         si_scan.mask_step_edges = unet_prediction3
-        
-        
+                
+
+        # Define the structuring element (kernel)
+        kernel = np.ones((3, 3), np.uint8)  # 3x3 kernel
+
        # print('bright features')
-       # plt.imshow(si_scan.mask_bright_features)
+       # plt.imshow(cv2.dilate(si_scan.mask_bright_features.astype('uint8'), kernel, iterations=2))
        # plt.show()
        # print('dark features')
        # plt.imshow(si_scan.mask_DV)
@@ -958,19 +976,19 @@ class Detector(object):
             output2 = np.stack((0.8*output[:,:,0], output[:,:,2], output[:,:,3], si_scan.mask_1DB, si_scan.mask_2DB, si_scan.mask_An, si_scan.mask_CDV), axis=2)
         # order of output2: background, step edges, dv, 1DB, 2DB, anomalies, CDV,  As features (if present)
         
-      #  print('1DB')
-      #  plt.imshow(si_scan.mask_1DB)
-      #  plt.show()
-      #  print('2DB')
-      #  plt.imshow(si_scan.mask_2DB)
-      #  plt.show()
-      #  print('anomalies')
-      #  plt.imshow(si_scan.mask_An)
-      #  plt.show()
-      #  if As:
-      #      print('As features')
-      #      plt.imshow(si_scan.mask_As)
-      #      plt.show()
+        #print('1DB')
+        #plt.imshow(cv2.dilate(si_scan.mask_1DB.astype('uint8'),kernel,iterations=2))
+        #plt.show()
+        #print('2DB')
+        #plt.imshow(cv2.dilate(si_scan.mask_2DB.astype('uint8'),kernel,iterations=2))
+        #plt.show()
+        #print('anomalies')
+        #plt.imshow(cv2.dilate(si_scan.mask_An.astype('uint8'),kernel,iterations=2))
+        #plt.show()
+        #if As:
+        #    print('As features')
+        #    plt.imshow(cv2.dilate(si_scan.mask_As.astype('uint8'),kernel,iterations=2))
+        #    plt.show()
         
         # create a dictionary that contains information about each feature in the scan
         # key = feature n: value = Feature instance. It includes feature type and pixel coordinate
@@ -1092,7 +1110,7 @@ if __name__ == "__main__":
     # make detector object to find and label defects
     detector = Detector()
     # run prediction
-    trace_down.one_hot_segmented = detector.predict(trace_down, As = True)
+    trace_down.one_hot_segmented = detector.predict(trace_down)
     # turn output into rgb image
     trace_down.rgb = detector.turn_rgb(trace_down.one_hot_segmented)
     ic(trace_down.feature_coords['As'])
