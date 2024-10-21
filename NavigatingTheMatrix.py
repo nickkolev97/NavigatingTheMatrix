@@ -331,6 +331,7 @@ class STM(object):
             k = (p_t-p_rt)/(np.sin(np.pi*p_t/(res))+np.sin(np.pi*p_rt/(res)))
             ks.append(k)
         k3 = np.mean(ks)
+        print('k3:', k3)
         
         tracec = trace.copy()
         retracec = retrace.copy()
