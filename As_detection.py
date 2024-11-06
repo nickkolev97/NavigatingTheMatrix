@@ -6,7 +6,12 @@ import matplotlib.patches as patches
 import cv2, argparse
 import torch
 import models as mo
+import networkx as nx
+import gc
+import dask.array as da # for operating on large arrays
 
+from copy import deepcopy
+from collections import deque
 import NavigatingTheMatrix as nvm
 import patchify as pat
 from pathlib import Path
@@ -53,7 +58,7 @@ class Feature(object):
     An object that contains information about a feature on a scan.
     Attributes:
         scan (Si_scan): the scan the feature is on
-        coord (numpy array): the coordinates of the feature in the scan
+        coord (numpy array): the coordinates of the feature in the scan. Coord is in the form [y, x] (numpy convention)
         feature_type (str): the type of feature. One of ['oneDB', 'twoDB', 'anomalies', 'As']
         distances (dict): dictionary with distances to other features on the scan
                           key = feature, value = distance in nm
@@ -147,7 +152,7 @@ class Si_Scan(object):
 
         # get rid of initial row of zeros in self.coords_probs
         self.coords_probs_vars = self.coords_probs_vars[1:,:]
-
+    
     def feature_dists(self):
         """
         For every feature on the scan it finds the distance between it and every other feature.
@@ -161,19 +166,21 @@ class Si_Scan(object):
             None
         
         """
-
-        for feature1 in self.features.values():
-            if feature1.feature_type != 'anomalies' and feature1.feature_type != 'closeToDV':
-                for feature2 in self.features.values():
-                    if feature2.feature_type != 'anomalies' and feature2.feature_type != 'closeToDV':
-                        if feature1!=feature2:
-                            #ic(feature1.coord, feature2.coord)
-                            dist = np.sqrt(np.sum( (feature2.coord-feature1.coord)**2 ) )*self.width/self.xres
-                            #ic(dist)
-                            feature1.distances[feature2] = dist
+        # Extract coordinates and feature types
+        coords = np.array([feature.coord for feature in self.features.values()])
         
-        return 
-    
+        # Calculate pairwise distances using broadcasting
+        diff = coords[:, np.newaxis, :] - coords[np.newaxis, :, :]
+        dists = np.sqrt(np.sum(diff ** 2, axis=-1)) * self.width / self.xres
+        
+        # Update distances in the feature objects
+        for i, feature1 in enumerate(self.features.values()):
+            for j, feature2 in enumerate(self.features.values()):
+                if i != j:
+                    feature1.distances[feature2] = dists[i, j]
+
+        return
+
     def find_pairs(self, feature1_type, feature2_type, max_dist, min_dist, exclusion_defects = ['oneDB', 'twoDB', 'anomalies', 'As'] ,exclusion_dist = False, display_image = False):
         '''
         finds pairs of features that are a certain distance from each other.
@@ -186,7 +193,7 @@ class Si_Scan(object):
             min_dist: the minimum wanted distance between two features (in nm)
             feature1_type and feature2_type: the types of feature. One of 'oneDB', 'twoDB', 'anomalies', 'As'
             exclusion_defects(list): List of features to keep outside of exclusions dist of the pair.
-                                     Should be a subset of ['oneDB', 'twoDB', 'anomalies', 'As']
+                                        Should be a subset of ['oneDB', 'twoDB', 'anomalies', 'As']
             exclusion_dist: if True, then it will exclude pairs of features that have other feature of either 
                             feature1_type or feature2_type within the exclusion_dist of them. (nm)
             display_image: if True, then it will display the image of the feature pairs labelled
@@ -194,9 +201,8 @@ class Si_Scan(object):
         Returns:
             Dictionary with number of feature pair as key and feature pair as value (where a feature is a feature
             object from this .py doc).
-
+          
         '''
-
         feature_pairs_dict = {}
         
         pairs_set = set() # set of pairs (used to avoid double counting)
@@ -208,7 +214,7 @@ class Si_Scan(object):
                 dists = np.array(list(feature1.distances.values()))
                 feature2_ids = np.where(dists<=max_dist)[0] # indices of features within max_dist
                 feature2s = [list(feature1.distances.keys())[i] for i in feature2_ids] # features within max_dist
-                new_feature2s = [feature for feature in feature2s if feature.feature_type in exclusion_defects] # features within max dist that are of type that we want to exclude
+                new_feature2s = [feature for feature in feature2s if feature.feature_type == feature2_type]
                 for feature2 in new_feature2s:
                     if feature1!=feature2:
                         # create a sorted tuple of the pair to avoid double counting
@@ -233,23 +239,19 @@ class Si_Scan(object):
                 feature1_neighbour_ids = np.where(dists1<exclusion_dist)[0] # all indices of features within exclusion_dist to feature1
                 feature2_neighbour_ids = np.where(dists2<exclusion_dist)[0]
                 feature1_neighbours = [list(feature1.distances.keys())[i] for i in feature1_neighbour_ids 
-                                       if list(feature1.distances.keys())[i].feature_type == feature2_type] # features of feature2_type within exclusion_dist of feature1
-                feature1_neighbours = [list(feature1.distances.keys())[i] for i in feature1_neighbour_ids 
-                                       if list(feature1.distances.keys())[i].feature_type == feature1_type] # features of feature1_type within exclusion_dist of feature1
+                                        if list(feature1.distances.keys())[i].feature_type in exclusion_defects] # features of type exclusion_defects within exclusion_dist of feature1
                 feature2_neighbours = [list(feature2.distances.keys())[i] for i in feature2_neighbour_ids 
-                                       if list(feature2.distances.keys())[i].feature_type == feature2_type]
-                feature2_neighbours = [list(feature2.distances.keys())[i] for i in feature2_neighbour_ids 
-                                       if list(feature2.distances.keys())[i].feature_type == feature1_type]
+                                    if list(feature2.distances.keys())[i].feature_type in exclusion_defects] # features of type exclusion_defects within exclusion_dist of feature2
                 if len(feature1_neighbours)<2 and len(feature2_neighbours)<2 and len(feature1_neighbours)<2 and len(feature2_neighbours)<2:
                     new_feature_pairs_dict[pair] = [feature1, feature2]
             feature_pairs_dict = new_feature_pairs_dict
 
         #ic(feature_pairs_dict)
         if display_image:
-            self.annotate_scan(feature_pairs_dict, [feature1_type, feature2_type], max_dist, min_dist)
+            self.annotate_scan(feature_pairs_dict, [feature1_type, feature2_type], max_dist, min_dist, exclusion_dist=exclusion_dist, exclusion_defects=exclusion_defects)
 
         return feature_pairs_dict
-
+      
     def find_triplets(self, feature1_type, feature2_type, feature3_type, max_dist, min_dist, max_angle, min_angle, exclusion_defects = ['oneDB', 'twoDB', 'anomalies', 'As'], exclusion_dist = False, uniform_dist = False, display_image = False):
         '''
         Finds triplets of features that are a certain distance from each other, with a certain angle between them.
@@ -261,11 +263,11 @@ class Si_Scan(object):
             max_angle: the maximum wanted angle between the features (in degrees) (only 1 of the angles in the triangle formed by the triplet need to satisfy this condition)
             min_angle: the minimum wanted angle between the features (in degrees) (only 1 of the angles in the triangle formed by the triplet need to satisfy this condition)
             exclusion_defects(list): List of features to keep outside of exclusions dist of the pair.
-                                     Should be a subset of ['oneDB', 'twoDB', 'anomalies', 'As']
+                                        Should be a subset of ['oneDB', 'twoDB', 'anomalies', 'As']
             exclusion_dist: if True, then it will exclude triplets of features that have some other feature of type [feature1_type, feature2_type]
                             within the exclusion distance of them. (nm)
             uniform_dist: if True, the max_dist and min_dist are the same for all pairs of features. If False, then only
-                          two of the pairs need to satisfy the distance condition.  
+                            two of the pairs need to satisfy the distance condition.  
             feature1_type and feature2_type feature3_type: the types of feature. One of 'oneDB', 'twoDB', 'anomalies', 'As'
         
         Returns:
@@ -273,128 +275,121 @@ class Si_Scan(object):
             object from this .py doc).
 
         '''
-
         feature_triplets_dict = {}
         # set of triplets (used to avoid double counting)
         triplets_set = set()
 
+        # find all feature pairs that satisfy the distance condition from the first two feature types
+        #print('looking for pairs between 1 and 2')
+        feature_pairs_dict12 = self.find_pairs(feature1_type, feature2_type, max_dist, min_dist, 
+                                                exclusion_defects = exclusion_defects, exclusion_dist=exclusion_dist)
+        #print('looking for pairs between 1 and 3')
+        # find all feature pairs that satisfy the distance condition from the feature1 and feature3 types
+        feature_pairs_dict13 = self.find_pairs(feature1_type, feature3_type, max_dist, min_dist,
+                                                exclusion_defects = exclusion_defects, exclusion_dist=exclusion_dist)
+        #print('looking for pairs between 2 and 3')
+        # find all feature pairs that satisfy the distance condition from the feature2 and feature3 types
+        feature_pairs_dict23 = self.find_pairs(feature2_type, feature3_type, max_dist, min_dist,
+                                                exclusion_defects = exclusion_defects, exclusion_dist=exclusion_dist)
+        
         i = 0
-
-        '''
-        used to use this to find all triplets of features that satisfy the distance condition
-        but found a new way that is faster. Keeping this here in case some mistake new way shows itself
-        if not exclusion_dist:
-            # find all feature pairs that satisfy the distance condition from the first two feature types
-            feature_pairs_dict12 = self.find_pairs(feature1_type, feature2_type, max_dist, min_dist, exclusion_dist=exclusion_dist)
-            for feature in self.features.values():
-                if feature.feature_type == feature3_type:
-                    for pair12 in feature_pairs_dict12.values():
-                        if feature!=pair12[0] and feature!=pair12[1]:
-                            # create a sorted tuple of the triplet to avoid double counting
-                            triplet = tuple(sorted((pair12[0], pair12[1], feature), key=lambda x: (x.coord[0], x.coord[1])))               
-                            # check if the triplet is already in the set
-                            if triplet not in triplets_set:
-                                # find the angle between the features
-                                angles = self._find_triangle_angles(pair12[0].coord, pair12[1].coord, feature.coord)
-                                # check if angles are within the wanted range
-                                # only 1 of the angles in the triangle formed by the triplet need to satisfy the angle condition
-                                if angles[0] <= max_angle and angles[0] >= min_angle or angles[1] <= max_angle and angles[1] >= min_angle or angles[2] <= max_angle and angles[2] >= min_angle:    
-                                    # find distances
-                                    dist1 = pair12[0].distances[feature]
-                                    dist2 = pair12[1].distances[feature]    
-                                    # check if distances are within the wanted range
-                                    if not uniform_dist: # only 2 pairs need to satisfy the distance condition
-                                        if dist1 <= max_dist and dist1 >= min_dist or dist2 <= max_dist and dist2 >= min_dist:
-                                            feature_triplets_dict[i] = [pair12[0], pair12[1], feature]
-                                            triplets_set.add(triplet)
-                                            i += 1
-                                    else: # all 3 pairs need to satisfy the distance condition
-                                        if dist1 <= max_dist and dist1 >= min_dist and dist2 <= max_dist and dist2 >= min_dist:
-                                            feature_triplets_dict[i] = [pair12[0], pair12[1], feature]
-                                            triplets_set.add(triplet)
-                                            i += 1
-        '''
-
-    
-        for feature in self.features.values():
-            if feature.feature_type == feature3_type:
-                dists = np.array(list(feature.distances.values()))
-                feature2_ids = np.where(dists<max_dist)[0] # all indices of features within max_dist
-                features2 = [list(feature.distances.keys())[i] for i in feature2_ids] # features within max_dist
-                feature2_types = [feature2.feature_type for feature2 in features2] # types of features within max_dist
-                
-                if feature1_type == feature2_type:
-                    if feature2_types.count(feature2_type)==2:                             
-                        # Find all indices of feature2 type
-                        indices = [index for index, value in enumerate(feature2_types) if value == feature2_type]
-                        feature1 = features2[indices[0]]
-                        feature2 = features2[indices[1]]
-                    else:
-                        feature1 = False
-                else:
-                    if feature2_types.count(feature2_type)== 1 and feature2_types.count(feature1_type)==1: 
-                        feature1 = features2[feature2_types.index(feature1_type)]
-                        feature2 = features2[feature2_types.index(feature2_type)]
-                    else:
-                        feature1 = False
-
-                if feature1:
-                    if feature!=feature1 and feature!=feature2 and feature1!=feature2:
-                        # create a sorted tuple of the triplet to avoid double counting
-                        triplet = tuple(sorted((feature1, feature2, feature), key=lambda x: (x.coord[0], x.coord[1])))
-                        # check if the triplet is already in the set
+        # find the pairs in the different dics that share one feature
+        for pair12 in feature_pairs_dict12.values():
+            for pair13 in feature_pairs_dict13.values():
+                for pair23 in feature_pairs_dict23.values():
+                    if pair12[0] == pair13[0]: 
+                        triplet = tuple(sorted((pair12[0], pair12[1], pair13[1]), key=lambda x: (x.coord[0], x.coord[1])))
                         if triplet not in triplets_set:
-                            # find the angle between the features
-                            angles = self._find_triangle_angles(feature1.coord, feature2.coord, feature.coord)
-                            # check if angles are within the wanted range
-                            # only 1 of the angles in the triangle formed by the triplet need to satisfy the angle condition
-                            if angles[0] <= max_angle and angles[0] >= min_angle or angles[1] <= max_angle and angles[1] >= min_angle or angles[2] <= max_angle and angles[2] >= min_angle:    
-                                # find distances
-                                dist1 = feature1.distances[feature]
-                                dist2 = feature2.distances[feature]       
-                                # check if distances are within the wanted range
-                                if not uniform_dist:
-                                    if dist1 <= max_dist and dist1 >= min_dist or dist2 <= max_dist and dist2 >= min_dist:
-                                        feature_triplets_dict[i] = [feature1, feature2, feature]
-                                        triplets_set.add(triplet)
-                                        i += 1
-                                else: # all 3 pairs need to satisfy the distance condition
-                                    if dist1 <= max_dist and dist1 >= min_dist and dist2 <= max_dist and dist2 >= min_dist:
-                                        feature_triplets_dict[i] = [feature1, feature2, feature]
-                                        triplets_set.add(triplet)
-                                        i += 1
-
-        if exclusion_dist:
-            # make list of defects to exclude that are not the feature1_type, feature2_type or feature3_type
-            exclusion_defects = [defect for defect in exclusion_defects if defect != feature1_type and defect != feature2_type and defect != feature3_type]
-            new_feature_triplets_dict = {}
-            for triplet in feature_triplets_dict.keys():
-                for feature in feature_triplets_dict[triplet]: # check all three 
-                    dists = np.array(list(feature.distances.values()))
-                    feature_ids = np.where(dists<exclusion_dist)[0] # all indices of features within exclusion_dist
-                    features = [list(feature.distances.keys())[i] for i in feature_ids] # features within exclusion_dist
-                    feature_types = [feature.feature_type for feature in features] # types of features within exclusion_dist
-                    feature_count = [feature_types.count(defect) for defect in exclusion_defects] # count of each defect type within exclusion_dist
-                    feature_count_ = [feature_types.count(feature1_type), feature_types.count(feature2_type), feature_types.count(feature3_type)]
-                    if all([count<1 for count in feature_count]) and all([count<2 for count in feature_count_]):
-                        # feature_count_ is less than 2 sinze 1 of the features is the feature we are looking at
-                        new_feature_triplets_dict[triplet] = True # define true now, then redefine as the actual triplet after checking all features if it satisfies the exclusion condition
-                    else:
-                        new_feature_triplets_dict[triplet] = False
-                if new_feature_triplets_dict[triplet]:
-                    new_feature_triplets_dict[triplet] = feature_triplets_dict[triplet]
-                else:
-                    new_feature_triplets_dict.pop(triplet)
-            
-            feature_triplets_dict = new_feature_triplets_dict
-
+                            angles_OK = self._check_angles(pair12[0], pair12[1], pair13[1], max_angle, min_angle)
+                            if angles_OK:
+                                feature_triplets_dict[i] = [pair12[0], pair12[1], pair13[1]]
+                                i += 1
+                                triplets_set.add(triplet)
+                    elif pair12[1] == pair23[0]:
+                        triplet = tuple(sorted((pair12[0], pair12[1], pair23[1]), key=lambda x: (x.coord[0], x.coord[1])))
+                        if triplet not in triplets_set:
+                            angles_OK = self._check_angles(pair12[0], pair12[1], pair23[1], max_angle, min_angle)
+                            if angles_OK:
+                                feature_triplets_dict[i] = [pair12[0], pair12[1], pair23[1]]
+                                i += 1
+                                triplets_set.add(triplet)
+                    elif pair23[1] == pair13[1]:
+                        triplet = tuple(sorted((pair13[0], pair23[0], pair23[1]), key=lambda x: (x.coord[0], x.coord[1])))
+                        if triplet not in triplets_set:
+                            angles_OK = self._check_angles(pair13[0], pair23[0], pair23[1], max_angle, min_angle)
+                            if angles_OK:       
+                                feature_triplets_dict[i] = [pair13[0], pair23[0], pair23[1]]
+                                i += 1
+                                triplets_set.add(triplet)
 
         if display_image:
-            self.annotate_scan(feature_triplets_dict, [feature1_type, feature2_type, feature3_type], max_dist, min_dist)
+            self.annotate_scan(feature_triplets_dict, [feature1_type, feature2_type, feature3_type], max_dist, min_dist, exclusion_dist=exclusion_dist, exclusion_defects=exclusion_defects)
 
         return feature_triplets_dict
 
-    def annotate_scan(self, dict_ntuplets, features, max_dist, min_dist, fig_size = (10,10), legend = True):
+    def find_quads(self, feature1_type, feature2_type, feature3_type, feature4_type, max_dist, min_dist, max_angle, min_angle, exclusion_defects = ['oneDB', 'twoDB', 'anomalies', 'As'], exclusion_dist = False, display_image = False):
+        '''
+        Finds quads of features that are a certain distance from each other, with a certain angle between them.
+
+        '''
+        feature_quads_dict = {}
+        # set of quads (used to avoid double counting)
+        quads_set = set()
+
+        # find all feature pairs that satisfy the distance condition from the first two feature types
+        #print('looking for pairs between 1 and 2')
+        feature_pairs_dict12 = self.find_pairs(feature1_type, feature2_type, max_dist, min_dist,
+                                                exclusion_defects = exclusion_defects, exclusion_dist=exclusion_dist)
+        #print('looking for pairs between 1 and 3')
+        # find all feature pairs that satisfy the distance condition from the feature1 and feature3 types
+        feature_pairs_dict13 = self.find_pairs(feature1_type, feature3_type, max_dist, min_dist,
+                                                exclusion_defects = exclusion_defects, exclusion_dist=exclusion_dist)
+        #print('looking for pairs between 1 and 4')
+        # find all feature pairs that satisfy the distance condition from the feature1 and feature4 types
+        feature_pairs_dict14 = self.find_pairs(feature1_type, feature4_type, max_dist, min_dist,
+                                                exclusion_defects = exclusion_defects, exclusion_dist=exclusion_dist)
+        #print('looking for pairs between 2 and 3')
+        # find all feature pairs that satisfy the distance condition from the feature2 and feature3 types
+        feature_pairs_dict23 = self.find_pairs(feature2_type, feature3_type, max_dist, min_dist,
+                                                exclusion_defects = exclusion_defects, exclusion_dist=exclusion_dist)
+        #print('looking for pairs between 2 and 4')
+        # find all feature pairs that satisfy the distance condition from the feature2 and feature4 types
+        feature_pairs_dict24 = self.find_pairs(feature2_type, feature4_type, max_dist, min_dist,
+                                                exclusion_defects = exclusion_defects, exclusion_dist=exclusion_dist)
+        #print('looking for pairs between 3 and 4')
+        # find all feature pairs that satisfy the distance condition from the feature3 and feature4 types
+        feature_pairs_dict34 = self.find_pairs(feature3_type, feature4_type, max_dist, min_dist,
+                                                exclusion_defects = exclusion_defects, exclusion_dist=exclusion_dist)
+        
+        i = 0
+        # find the pairs in the different dics that share one feature, we need 3 pairs to share one feature
+        # (and only one) to form a quad
+        feature_quads_dict, i, quads_set = self.find_shared_1_in4(feature_pairs_dict12, feature_pairs_dict13, feature_pairs_dict14, quads_set, feature_quads_dict, i, [0,0,0])
+        feature_quads_dict, i, quads_set = self.find_shared_1_in4(feature_pairs_dict12, feature_pairs_dict23, feature_pairs_dict24, quads_set, feature_quads_dict, i, [1,0,0])
+        feature_quads_dict, i, quads_set = self.find_shared_1_in4(feature_pairs_dict13, feature_pairs_dict34, feature_pairs_dict23, quads_set, feature_quads_dict, i, [1,1,0])
+        feature_quads_dict, i, quads_set = self.find_shared_1_in4(feature_pairs_dict12, feature_pairs_dict12, feature_pairs_dict24, quads_set, feature_quads_dict, i, [1,1,0])
+        feature_quads_dict, i, quads_set = self.find_shared_1_in4(feature_pairs_dict12, feature_pairs_dict12, feature_pairs_dict34, quads_set, feature_quads_dict, i, [0,1,1])
+
+        pass
+
+    def find_shared_1_in4(self, feature_pairs_dict12, feature_pairs_dict13, feature_pairs_dict14,quads_set, feature_quads_dict, i, shared):
+        '''
+        F
+        '''
+        j,k,l = shared
+        for pair12 in feature_pairs_dict12.values():
+            for pair13 in feature_pairs_dict13.values():
+                for pair14 in feature_pairs_dict14.values():
+                    if pair12[j] == pair13[k] == pair14[l]:
+                        quad = tuple(sorted((pair12[0], pair12[1], pair13[1], pair14[1]), key=lambda x: (x.coord[0], x.coord[1])))
+                        if quad not in quads_set:
+                            feature_quads_dict[i] = [pair12[0], pair12[1], pair13[1], pair14[1]]
+                            i += 1
+                            quads_set.add(quad)
+        
+        return feature_quads_dict, i, quads_set
+
+    def annotate_scan(self, dict_ntuplets, features, max_dist, min_dist, exclusion_dist=False, exclusion_defects=[], fig_size = (10,10), legend = True):
         """
         Produces a labelled image of the n-tuplet of features
         We draw on the image using PIL
@@ -414,7 +409,7 @@ class Si_Scan(object):
 
         # Prepare to draw on the image
         scan_c = self.scan.copy()
-       
+    
         # plot all ntuplets on same image
         fig, ax = plt.subplots(figsize=fig_size)
         plt.imshow(scan_c[:,:,0], cmap='afmhot')
@@ -449,9 +444,13 @@ class Si_Scan(object):
                             centre_coords.append(list(centre_coord))
 
         #plt.savefig(scan_c, '{}_labelled_pairs_of_{}_{}'.format(self.scan, feature1, feature2))
-        plt.title('{} features with separation between {}nm and {}nm'.format(features, min_dist, max_dist))
-        plt.show()
-        
+        if exclusion_dist == False:
+            plt.title('{} features with separation between {}nm and {}nm'.format(features, min_dist, max_dist))
+            plt.show()
+        else:
+            plt.title('{} features with separation between {}nm and {}nm and no features of type {} within {}nm'.format(features, min_dist, max_dist, exclusion_defects, exclusion_dist))
+            plt.show()
+
         # now plot all ntuplets on separate images but smaller
         # if we have more than one ntuplet
 
@@ -513,6 +512,18 @@ class Si_Scan(object):
 
         return
 
+    def _check_angles(self, feature1, feature2, feature3, max_angle, min_angle):
+        '''
+        Checks if angles in triangle are within the wanted range.
+        '''
+        angles = self._find_triangle_angles(feature1.coord, feature2.coord, feature3.coord)
+        # check if angles are within the wanted range
+        # only 1 of the angles in the triangle formed by the triplet need to satisfy the angle condition
+        if angles[0] <= max_angle and angles[0] >= min_angle or angles[1] <= max_angle and angles[1] >= min_angle or angles[2] <= max_angle and angles[2] >= min_angle:    
+            return True
+        
+        return False
+
     def _find_triangle_angles(self, coord1, coord2, coord3):
         '''
         Find the angles in the triangle formed by the three coordinates.
@@ -534,6 +545,8 @@ class Si_Scan(object):
         angles = [angle1*180/np.pi, angle2*180/np.pi, angle3*180/np.pi]
         return angles
 
+
+
     def oneDhistogram(self, distances, edge, dr, density):
         nbins = edge//dr
         histogram = np.histogram(distances, bins = nbins)
@@ -547,17 +560,22 @@ class Si_Scan(object):
         return histogram
 
 
-
-
-
 class Detector(object):
     '''
     Detector object that finds/classifies the different features in a scan.
     Attributes:
         crop_size (int): half the size of the crops that are fed into the classifier
-        
+        self.model_DB: model for detecting 1DB, 2DB, anomalies and background
+        self.model_As: model for detecting 1DB, 2DB, anomalies, background and As
+        self.UNETbright: UNET model for detecting bright features
+        self.UNETdark: UNET model for detecting dark features
+        self.UNETstep: UNET model for detecting step edges
+        self.legend: dictionary corresponding to colours used in final segmentation. If not provided
+                     uses the default. Default: background = brown, step edge = Green, dark feature = Blue
+                                       , single dB = Yellow, double DB = Cyan, anomaly = Magenta
+                                       , cluster =  White, As = Black
     '''
-    def __init__(self):
+    def __init__(self, legend = False):
         
         self.crop_size = 6
         
@@ -569,8 +587,14 @@ class Detector(object):
         self.UNETdark = UNET2
         self.UNETstep = UNET3
 
-        # legend dictionary corresponding to colours used in final segmentation
-        self.legend = {(0.8,0.7,0.7): 'background', (0,1,0): 'step edges', (0,0,1): 'dark feature', (0.4,0.4,0): 'single DB', (0.4,0,0.4): 'double DB', (0,0.4,0.4): 'anomalies', (1,1,1): 'close to DV', (1,0,0): 'cluster',  (1,1,0): 'As', }
+        if legend != False:
+            self.legend = legend
+        else:
+            # legend dictionary corresponding to colours used in final segmentation
+            self.legend = {(150/255, 100/255, 50/255): 'background', (0, 1, 0): 'step edges', (0, 0, 1): 'dark feature', 
+                           (1, 1, 0): 'single DB', (0, 1, 1): 'double DB', (1,0,1): 'anomalies', 
+                           (1,1,1): 'cluster',  (0,0,0): 'As', }
+
 
     def norm1(self, array):
         '''
@@ -797,7 +821,7 @@ class Detector(object):
             scan (npy array): Si(001) scan. 
             scan_filled (npy array): filled state of the scan
             scan_empty (npy array): empty state of the scan
-            coord (list of floats): coordinate of the feature
+            coord (list of floats): coordinate of the feature (in form (y,x))
             DVcoords (npy array): coordinates of the DVs in the scan
         Returns:
             prediction (int): the label of the feature            
@@ -1018,34 +1042,31 @@ class Detector(object):
         
         return unet_prediction.detach().numpy()
         
-    def turn_rgb(self,array):
+    def turn_rgb(self,array, scan = False):
         '''
         Turns one-hot encoded array with up to 7 categories into an rgb image
     
         Args:
-            array: numpy array of shape (res,res,7) with the different features labelled with
+            array (ndarray): shape (res,res,7) with the different features labelled with
                   one-hot encoding.
         returns:
-            output: numpy array of shape (res,res,3) with the different features labelled with
+            output (ndarray): Shape (res,res,3) with the different features labelled with
                     rgb encoding.
-            legend: dictionary with the rgb values as keys and the corresponding feature as values
+            legend (dict): The rgb values as keys and the corresponding feature as values
+            scan (False or ndarray): If not false, the scan is used to make the output have zeros where the scan is zero
         '''
         # Define the mapping from categories to RGB colors
-        category_to_rgb = np.array([[150, 50, 50],  # red-orange
-                                    [0, 255, 0],    # Green
-                                    [0, 0, 255],    # Blue
-                                    [255, 255, 0],  # Yellow
-                                    [0, 255, 255],  # Cyan
-                                    [255, 0, 255],  # Magenta
-                                    [255, 255, 255],# White
-                                    [0, 0, 0]       # Black
-                                ], dtype=np.uint8)
+        category_to_rgb = (255*np.array(list(self.legend.keys()))).astype(np.uint8)
 
         # Get the category indices from the one-hot encoded array
         category_indices = np.argmax(array, axis=-1)
 
         # Map the category indices to RGB colors
         output = category_to_rgb[category_indices]
+
+        if np.any(scan) != False:
+            # if given the true scan, we want to have zeros in the same places.
+            output[scan[:,:,0]==0] = [0,0,0]
 
         return output
     
@@ -1075,6 +1096,25 @@ class segmented_scan_stitcher(object):
     Methods:
     find_homography: Finds the homography matrix needed to align scan1 and scan2.
     stitch_two_scans: Stitches together two images using the homography matrix.
+    check_homography: Checks if the homography matrix is valid.
+    _get_rotation: Extracts the rotation component from the homography matrix.
+    _get_size_change: Calculates the size change caused by the homography matrix.
+    _get_translation: Extracts the translation component from the homography matrix.
+    translation_filter: Filters matches to find the best translation.
+    get_frame_translation: Gets the frame translation between two arrays.
+    stitch_two_arrays: Stitches two arrays together using the homography matrix.
+    stitch_scans: Stitches multiple scans together.
+    breadth_first_search: Performs a breadth-first search on the graph.
+    get_all_homographies: Finds all homographies between segmented scans.
+    stitch_from_homographies: Stitches scans using precomputed homographies.
+    plot_homography: Plots the homography transformation between two images.
+    plot_grid_with_moves: Plots a grid with allowed moves between grid points.
+    _get_full_tensor: Gets the full tensor representation of a scan.
+    convert_to_3d_points: Converts 2D feature coordinates to 3D points.
+    get_initial_estimates: Extracts initial estimates for bundle adjustment.
+    bundle_adjustment: Performs bundle adjustment to refine homographies and 3D points.
+    reprojection_error: Computes the re-projection error for bundle adjustment.
+    project: Projects 3D points into 2D using homographies.
     '''
 
     def __init__(self):
@@ -1100,6 +1140,7 @@ class segmented_scan_stitcher(object):
         returns:
         H (numpy.ndarray): Homography matrix
         mask (numpy.ndarray): Mask of inliers
+        
         '''
 
         channels = sum([[img1[:,:,i],img2[:,:,i]] for i in range(img1.shape[2])], [])
@@ -1144,7 +1185,7 @@ class segmented_scan_stitcher(object):
             translations_list.append(translations)
             most_common_trans_list.append(most_common_trans)
 
-        if all(most_common_trans.size == 0 for most_common_trans in most_common_trans_list):
+        if np.all(np.array([most_common_trans.size == 0 for most_common_trans in most_common_trans_list])):
             print("No common points found between the two scans")
             return None
         
@@ -1494,9 +1535,9 @@ class segmented_scan_stitcher(object):
         h2, w2 = array2.shape[:2]
 
         # Get the canvas dimensions
-        pts_img1 = np.float32([[0, 0], [0, h1], [w1, h1], [w1, 0]]).reshape(-1, 1, 2)
-        pts_img2 = np.float32([[0, 0], [0, h2], [w2, h2], [w2, 0]]).reshape(-1, 1, 2)
-
+        pts_img1 = np.expand_dims(np.float32([[0, 0], [0, h1], [w1, h1], [w1, 0]]), axis = 1 )
+        pts_img2 = np.expand_dims(np.float32([[0, 0], [0, h2], [w2, h2], [w2, 0]]), axis = 1 )
+        
         pts_img2_transformed = cv2.perspectiveTransform(pts_img2, H)
       
         pts = np.concatenate((pts_img1, pts_img2_transformed), axis=0)
@@ -1506,25 +1547,31 @@ class segmented_scan_stitcher(object):
         # Translation matrix to shift the image
         translation_dist = [-xmin, -ymin]
         H_translation = np.array([[1, 0, translation_dist[0]], [0, 1, translation_dist[1]], [0, 0, 1]])
+
         # Warp the second image
         result_array = cv2.warpPerspective(array2, H_translation.dot(H), (xmax - xmin, ymax - ymin))
-        #result_array = cv2.warpPerspective(array2, H_t.dot(H), (xmax - xmin, ymax - ymin))
-        #result_array = cv2.warpPerspective(array2, H, (xmax - xmin, ymax - ymin))
-        print('translation dist', translation_dist)
+
+        # Overlay the second image on top of the warped first image
+        h1, w1 = array1.shape[:2]
+        translation_y, translation_x = translation_dist
+        
         # Overlay the second image on top of the warped first image
         mask = (array1[:,:,0] == 0)
-        result_array[translation_dist[1]:translation_dist[1] + h1, translation_dist[0]:translation_dist[0] + w1, :] = result_array[translation_dist[1]:translation_dist[1] + h1, translation_dist[0]:translation_dist[0] + w1,:]*np.expand_dims(mask, axis=-1) + array1
 
-        full_mask = np.zeros(result_array.shape[:2])
-        full_mask[translation_dist[1]:translation_dist[1] + h1, translation_dist[0]:translation_dist[0] + w1] = mask
+        # turn into dask arrays
+
+        result_array[translation_x:translation_x + h1, translation_y:translation_y + w1, :] = result_array[translation_x:translation_x + h1, translation_y:translation_y + w1,:]*np.expand_dims(mask, axis=-1) + array1
+
+        full_mask = np.ones(result_array.shape[:2])
+        full_mask[translation_x:translation_x + h1, translation_y:translation_y + w1] = mask
 
         plt.imshow(result_array[:,:,0], cmap='afmhot')
         plt.title('Stitched image')
         plt.show()
 
-        plt.imshow(result_array[:,:,2:5], cmap='afmhot')
-        plt.title('Stitched image')
-        plt.show()
+       # plt.imshow(result_array[:,:,2:5], cmap='afmhot')
+       # plt.title('Stitched image')
+       # plt.show()
 
 
         return result_array, H_translation, full_mask
@@ -1575,34 +1622,54 @@ class segmented_scan_stitcher(object):
         stm_scan.trace_up_proc = stm_scan.trace_up
         stm_scan.retrace_up_proc = stm_scan.retrace_up
         result_scan = Si_Scan(stm_scan, 'trace up')
+       # result_scan.rgb = stitched_channels[:,:,2:5]
         result_scan.one_hot_segmented = stitched_channels[:,:,2:]
-        
+
         # update locations of the defects
         new_defects = {key: [] for key in scan1.feature_coords}
         for scan in [scan1, scan2]:
-            defects = []
-            for key in scan.feature_coords.keys():
-                if len(scan.feature_coords[key])>0:
-                    coords = np.array([np.array(scan.feature_coords[key])[:,1], np.array(scan.feature_coords[key])[:,0]])
-                    coords = np.vstack((coords, np.ones((1,coords.shape[1]))))
-                    coords = np.dot(H_translation, coords).T
-                    coords = np.round(coords[:,:2], 0).reshape(-1,2).astype(int)
+            for key, coords_list in scan.feature_coords.items():
+                if len(coords_list)>0:
+                    # coords come in form (y,x) due to numpy convention
+                    coords = np.array([np.array(coords_list)[:,1], np.array(coords_list)[:,0]]) # now (x,y)
+                    coords = np.expand_dims( coords.astype(np.float32).T, axis=1) #reshape(-1,1,2)
+                    if scan == scan2:
+                        coords = cv2.perspectiveTransform(coords, H_translation.dot(H))[:,0,:]
+                    else:
+                        coords = cv2.perspectiveTransform(coords, H_translation)[:,0,:]
+                    coords = np.round(coords,0).astype(int)
+                    
+                    # there may be small errors in the multiplication with the homography
+                    # image that cause the coordinates to be just outside the image (1 or 2 pixels)
+                    # check if any are outside the image and correct them
+                    outside_y_bigger = coords[:,1]>result_scan.one_hot_segmented.shape[0]-1
+                    outside_y_smaller = coords[:,1]<0
+                    outside_x_bigger = coords[:,0]>result_scan.one_hot_segmented.shape[1]-1
+                    outside_x_smaller = coords[:,0]<0
+                    outside_y_total = np.sum(outside_y_bigger)+np.sum(outside_y_smaller)
+                    outside_x_total = np.sum(outside_x_bigger)+np.sum(outside_x_smaller)
+                    coords[outside_y_bigger,1] = result_scan.one_hot_segmented.shape[0]-1
+                    coords[outside_y_smaller,1] = 0
+                    coords[outside_x_bigger,0] = result_scan.one_hot_segmented.shape[1]-1
+                    coords[outside_x_smaller,0] = 0
                     if scan == scan2:
                         # only add defects not in the overlap
-                        for key, coord in defects:
-                            if full_mask[coord[1], coord[0]]==0:
-                                new_defects[key].append((coord[1], coord[0]))
+                        for coord in coords:
+                            if full_mask[coord[1], coord[0]]==1: # (y,x)
+                                new_defects[key].append(np.array([coord[1], coord[0]]))
                     else:
-                        for key, coord in defects:
-                            new_defects[key].append((coord[1], coord[0]))
+                        for coord in coords:
+                            new_defects[key].append(np.array([coord[1], coord[0]]))
                 else:
                     continue
 
         result_scan.feature_coords = new_defects
 
         # add these to a features dict
-        for i, key in enumerate(result_scan.feature_coords.keys()):
-            result_scan.features[i] = Feature(result_scan, result_scan.feature_coords[key], key) 
+        for key in result_scan.feature_coords.keys():
+            len_features = len(result_scan.features)
+            for i, coord in enumerate(result_scan.feature_coords[key]):
+                result_scan.features[len_features + i] = Feature(result_scan, coord, key) 
 
         return result_scan, H_translation
 
@@ -1724,7 +1791,7 @@ class segmented_scan_stitcher(object):
             neighbour_keys = [(key[0]+1, key[1]), (key[0], key[1]+1)]
             for neighbour_key in neighbour_keys:
                 print('Currently working on: ', neighbour_key, key)
-                if neighbour_key not in segmented_scans:
+                if neighbour_key not in seg_scans:
                     continue
                 neighbour = seg_scans[neighbour_key]
                 # get np arrays of stitched_scan and neighbour
@@ -1781,21 +1848,21 @@ class segmented_scan_stitcher(object):
 
         # define the initial 'stitched scan' as the first scan
         stitched_scan = deepcopy(seg_scans[starter_scan_key])
-        j=0
-        for key, scan in seg_scans.items():
+        
+        for j, (key, scan) in enumerate( seg_scans.items() ):
             if key != starter_scan_key:
                 if j<stitch_for_n:
+                    if j>5:
+                        gc.collect()
                     print('Searching for path between', starter_scan_key, key)
                     path = self.breadth_first_search(graph, starter_scan_key, key)
                     if path is None:
                         print("No path found between", starter_scan_key, key)
                         continue
-                    print(path)
                     # get the required H matrices and translations
                     H = np.eye(3)
                     for i, step in enumerate(path):
                         if i < len(path)-1:
-                            print('H', key, step, path[i+1])
                             h = homographies[(path[i+1], step)]
                             #self.plot_homography(scan.scan[:,:,0], seg_scans[step].scan[:,:,0], h)
                             H = np.dot(homographies[(path[i+1],step)], H)
@@ -1803,7 +1870,7 @@ class segmented_scan_stitcher(object):
                     stitched_scan, trans = self.stitch_two_scans(stitched_scan, scan, H)
                     added_scans.append(key)
                     translation = np.dot(translation, trans)
-                j+=1
+                
 
         # stitched scan finished. Need to redefine the one_hot_segmented maps.
         # These weren't done during stitching asit causes a memory issue
@@ -1985,10 +2052,405 @@ class segmented_scan_stitcher(object):
                 points_proj.append([u, v])
         return np.array(points_proj)
 
+"""
+
+class scan_stitcher(object):
+    '''
+    A class used to stitch together STM scans NOT Si_scan objects!
+
+    Attributes:
 
 
+    Methods:
+    find_homography: Finds the homography matrix needed to align scan1 and scan2.
+    stitch_two_scans: Stitches together two images using the homography matrix.
+    '''
+
+    def __init__(self):
+        pass
+
+    def find_homography(self, img1, img2, show_plot = False, round_to = 10, counts1=5, counts2=5):
+        '''
+        Finds the homography matrix needed to align scan1 and scan2. 
+        It first find common points between the two scans using SIFT, then uses RANSAC to get rid of the bad matches 
+        and find the homography matrix.
+
+        Args:
+        img1 (numpy.ndarray): First scan. If one scans smaller than the other (in nm), this should be the smaller scan for better results.
+        img2 (numpy.ndarray): Second scan
+        show_plot (bool): Whether to plot the matches and the homography transformation
+        counts2 (int): The number of common translations needed to keep a match for second round of filtering
+        round_to (int): The number to round the translations to. Default is 10
+        counts1 (int): The number of common translations needed to keep a match for the first round of filtering
+
+        returns:
+        H (numpy.ndarray): Homography matrix
+        mask (numpy.ndarray): Mask of inliers
+        '''
+
+        channels = sum([[img1[:,:,i],img2[:,:,i]] for i in range(len(img1.shape[2]))], [])
+
+        # max/min normalise the images. They are 3D arrays so we need to do this for each channel
+        channels = [(channel - np.min(channel))/(np.max(channel)-np.min(channel)) for channel in channels]
+                                        
+        # we need to use the OpenCV SIFT algorithm which needs the scan in a certain format
+        sift_channels = [cv2.normalize(channel, None, 0, 255, cv2.NORM_MINMAX).astype('uint8') for channel in channels]
+
+        # Create SIFT object
+        sift = cv2.SIFT_create(contrastThreshold=0.00001, edgeThreshold=10000) 
+    
+        # Find keypoints and descriptors
+        kps_descs = [sift.detectAndCompute(channel, None) for channel in sift_channels]
+
+        FLANN_INDEX_KDTREE = 1
+        index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=10)
+        search_params = dict(checks=50)
+        
+        # Find matches between channel1 of img1 and channel1 of img2, then channel2 of img1 and channel2 of img2 etc
+        # but not of channel1 of img1 and channel2 of img2 etc
+        # could add this later if not enough matches generated
+        flann = cv2.FlannBasedMatcher(index_params, search_params)
+        matches_list = []
+        for i in range(0, len(kps_descs),2):
+            kp1, desc1 = kps_descs[i]
+            kp2, desc2 = kps_descs[i+1]
+            matches1to2 = flann.knnMatch(desc1, desc2, k=2)
+            matches2to1 = flann.knnMatch(desc2, desc1, k=2)
+            matches_list.append(matches1to2)
+            matches_list.append(matches2to1)
+
+        # First filter: round translations to nearest 'round_to' and only keep matches that have 
+        # the same (rounded) translation to at least 'counts1' other matches
+        good_arrs = []
+        translations_list = []
+        most_common_trans_list = []
+        for i, matches in enumerate(matches_list):
+            if i%2==0:
+                kp1, desc1 = kps_descs[i]
+                kp2, desc2 = kps_descs[i+1]
+            else:
+                kp2, desc2 = kps_descs[i]
+                kp1, desc1 = kps_descs[i-1]
+            good_arr, translations, most_common_trans = self.translation_filter(matches, kp1, kp2, round_to, counts2)
+            good_arrs.append(good_arr)
+            translations_list.append(translations)
+            most_common_trans_list.append(most_common_trans)
+
+        if all(most_common_trans.size == 0 for most_common_trans in most_common_trans_list):
+            print("No common points found between the two scans")
+            return None
+        
+        # delete any matches that don't have a similar translation to any other matches
+        for i, most_common_trans in enumerate(most_common_trans_list):
+            top_matches_list = [(good_arrs[i][np.sum(translations_list[i] == trans,axis=1)==2, :].tolist() for trans in most_common_trans)]
+        
+        # plot matches 
+        if show_plot:
+            for i in range(len(top_matches_list)):
+                if i%2==0:
+                    plot = cv2.drawMatches(sift_channels[i], kps_descs[i][0], sift_channels[i+1], kps_descs[i+1][0], top_matches_list[i], None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+                    plt.imshow(plot, cmap='afmhot')
+                    plt.title('Clusters of matches with similar translations')
+                    plt.show()
+                else:
+                    plot = cv2.drawMatches(sift_channels[i], kps_descs[i][0], sift_channels[i-1], kps_descs[i-1][0], top_matches_list[i], None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+                    plt.imshow(plot, cmap='afmhot')
+                    plt.title('Clusters of matches with similar translations')
+                    plt.show()
 
 
+        # Convert matches any matches that aren't from img1, channel1 -> img2,channl1 into img1, channel1 -> img2, channel1  
+        # we also need two lists of all the keypoints. One for img1 and one for img2. (All keypoints from all channels in img1 
+        # become keypoints of img1, channel1 etc)
+        kp1 = []
+        kp2 = []
+        good = top_matches_list[0] # first set is img1, channel1 -> img2, channel1
+        # now convert the rest of the matches
+        for i, top_matches in enumerate(1, top_matches_list):
+            if i%2==0:
+                good += [ cv2.DMatch(_queryIdx=m.queryIdx + len(kp1), _trainIdx=m.trainIdx + len(kp2),
+                                     _imgIdx=m.imgIdx, _distance=m.distance) for m in top_matches]
+            else:
+                good += [ cv2.DMatch(_queryIdx=m.trainIdx + len(kp2), _trainIdx=m.queryIdx + len(kp1),
+                                     _imgIdx=m.imgIdx, _distance=m.distance) for m in top_matches]
+                kp1 += kps_descs[i-1][0]
+                kp2 += kps_descs[i][0]
+
+        # now filter with translations for second time. This time we use counts2 to filter and 
+        # it can be more strict (i.e. higher) as we should have more 'true' matches               
+        good_arr, translations, most_common_trans = self.translation_filter(good, kp1, kp2, round_to, counts2)
+        
+        # delete any matches that don't have a similar translation to any other matches
+        good = sum( [good_arr[ np.sum( translations == trans, axis=1) ==2, :].tolist() for trans in most_common_trans], [] ) 
+        
+        if len(good)<4:
+            print("Not enough matches found to compute homography matrix")
+            return None
+        
+        # draw matches
+        if show_plot:
+            plot = cv2.drawMatches(sift_channels[0], kp1, sift_channels[1], kp2, good, None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+            plt.imshow(plot, cmap='afmhot')
+            plt.title('Clusters of matches with similar translations')
+            plt.show()
+        
+        # find keypoints in image 2 that have multiple matches in image 1 and keep only the best one
+        repeated_kps = {}
+        for m in good:
+            if m.trainIdx not in repeated_kps:
+                repeated_kps[m.trainIdx] = [m]
+            else:
+                repeated_kps[m.trainIdx].append(m)
+        
+        # Sort the repeated_kps
+        for k, v in repeated_kps.items():
+            repeated_kps[k] = sorted(v, key=lambda x: x.distance)
+
+        # Remove all but the best match
+        unique_good = []
+        for k, v in repeated_kps.items():
+            unique_good.append(v[0])  # Keep only the best match
+        
+        if len(unique_good)<4:
+            print("Not enough matches found to compute homography matrix")
+            return None
+
+        # use Ransac to get rid of more bad matches
+        src_pts = np.float32([kp1[m.queryIdx].pt for m in unique_good]).reshape(-1, 1, 2)
+        dst_pts = np.float32([kp2[m.trainIdx].pt for m in unique_good]).reshape(-1, 1, 2)
+
+        H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, ransacReprojThreshold=1, maxIters=5000, confidence = 0.995)
+        matchesMask = mask.ravel().tolist()
+
+        h,w = sift_channels[0].shape
+        pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
+        dst = cv2.perspectiveTransform(pts,H)
+        if show_plot:
+            plot2 = cv2.polylines(np.copy(sift_channels[1]),[np.int32(dst)],True,255,3, cv2.LINE_AA)
+            draw_params = dict(matchColor = (0,255,0), # draw matches in green color
+                    singlePointColor = None,
+                    matchesMask = matchesMask, # draw only inliers
+                    flags = 2)
+            plot3 = cv2.drawMatches(sift_channels[0], kp1, plot2, kp2, unique_good ,None,**draw_params)
+            plt.imshow(plot3, cmap='afmhot'), plt.title('Homography matches'), plt.show()
+
+        if H is None:
+            print("Homography matrix not found")
+            return None
+
+        ###########################################
+        # Now we have a homography matrix let's do some tests on it to make sure it's valid
+        valid = self.check_homography(H, mask, unique_good, kp1, kp2, show_plot)
+
+        if valid:
+            return H, mask, src_pts, dst_pts
+        
+        print("Homography matrix not valid")
+        return None
+    
+    def check_homography(self, H, channel):
+        '''
+        Checks to see if homography matrix is valid.
+        It should coserve orientation, not rotate too much and not change the size of the image too much.
+        Args:
+        H (numpy.ndarray): Homography matrix
+        channel: Channel to be transformed
+
+        returns:
+        valid (bool): Whether the homography matrix is valid or not
+        '''
+
+        # it should conserve orientation (scan should not be mirrored) (det>0)
+        det = (H[0,0]*H[1,1])-(H[0,1]*H[1,0])
+        if det<=0:
+            print("Homography matrix does not conserve orientation")
+            return False
+        
+        # rotation should be no more than 20 degrees (hand picked parameter, could change)
+        point1 = np.array([0,1,1])
+        point2 = np.array([0,0,1])
+        point1_rot = np.dot(H,point1)
+        point2_rot = np.dot(H,point2)
+        vec = point1[:2]-point2[:2]
+        vec_rot = point1_rot[:2] - point2_rot[:2]
+        # find angle between vec and vec_rot
+        angle = np.arccos(np.dot(vec, vec_rot)/(np.linalg.norm(vec)*np.linalg.norm(vec_rot)))
+        angle = np.degrees(angle)
+        if angle>20 or angle<-20:
+            print("Homography matrix isn't valid (rotates too much).")
+            return False
+        
+        # size shouldn't change by too much
+        # +30% or -30% max 
+        # Get the dimensions of the images
+        h2, w2 = channel.shape[:2]
+        # Get the canvas dimensions
+        pts_channel = np.float32([[0, 0], [0, h2], [w2, h2], [w2, 0]]).reshape(-1, 1, 2)
+        pts_channel_transformed = cv2.perspectiveTransform(pts_channel, H)
+        # check the size of the transformed image
+        [xmin, ymin] = np.int32(pts_channel_transformed.min(axis=0).ravel() - 0.5)
+        [xmax, ymax] = np.int32(pts_channel_transformed.max(axis=0).ravel() + 0.5)
+        area_original = h2*w2
+        area_transformed = (xmax-xmin)*(ymax-ymin)
+        if area_transformed>1.3*area_original or area_transformed<0.7*area_original:
+            print("Homography matrix isn't valid (changes size too much).")
+            return False
+
+        return True
+
+    def translation_filter(self, matches, kp1, kp2, round_to = 10, counts_thresh=4):
+        '''
+        Filters out matches that have a translation that aren't in a cluster of similar translations
+        Args:
+        matches (list): List of matches
+        kp1 (list): List of keypoints from the first channel
+        kp2 (list): List of keypoints from the second channel
+        counts_thresh (int): The number of common translations needed to keep a match
+        round_to (int): The number to round the translations to. Default is 10
+
+        returns:
+        good_arr (numpy.ndarray): Array of matches
+        translations (numpy.ndarray): Array of translations
+        most_common_trans (list): List of translations that appear more than counts_thresh times
+        '''
+        
+        good_arr = np.array([ [m, m.distance, m.trainIdx, m.queryIdx, kp2[m.trainIdx].pt[0], kp2[m.trainIdx].pt[1], kp1[m.queryIdx].pt[0], kp1[m.queryIdx].pt[1]] for m in matches])
+        # find translations
+        translations = ((good_arr[:,4:6] - good_arr[:,6:])/round_to).astype(np.float64).round()*round_to
+        # find top m translations and only keep those matches
+        unique_points, counts = np.unique(translations, axis=0, return_counts=True)
+        # Find the indices of the translations that appear more than 10 times
+        most_common_indices = np.where(counts>counts_thresh)
+        # Get the most common tranlsations
+        most_common_trans = unique_points[most_common_indices]
+        
+        return good_arr, translations, most_common_trans
+
+    def stitch_two_scans(self, img1, img2, H):
+        '''
+        Stitches together two images using the homography matrix.
+
+        Args:
+        img1 (numpy.ndarray): First scan. If one scans smaller than the other (in nm), this should be the smaller scan for better results.
+        img2 (numpy.ndarray): Second scan
+        H (numpy.ndarray): Homography matrix
+
+        returns:
+        result_img (numpy.ndarray): The stitched image
+        H_translation (numpy.ndarray): The translation matrix
+        '''
+        # change their resolution to the same
+        # Get the dimensions of the images
+        h1, w1 = img1.shape[:2]
+        h2, w2 = img2.shape[:2]
+        #print(h1,w1,h2,w2) # seems fine
+        # Get the canvas dimensions
+        pts_img1 = np.float32([[0, 0], [0, h1], [w1, h1], [w1, 0]]).reshape(-1, 1, 2)
+        pts_img2 = np.float32([[0, 0], [0, h2], [w2, h2], [w2, 0]]).reshape(-1, 1, 2)
+
+        pts_img2_transformed = cv2.perspectiveTransform(pts_img2, H)
+        #print(pts_img2_transformed)
+        pts = np.concatenate((pts_img1, pts_img2_transformed), axis=0)
+        [xmin, ymin] = np.int32(pts.min(axis=0).ravel() - 0.5)
+        [xmax, ymax] = np.int32(pts.max(axis=0).ravel() + 0.5)
+
+        # Translation matrix to shift the image
+        translation_dist = [-xmin, -ymin]
+        H_translation = np.array([[1, 0, translation_dist[0]], [0, 1, translation_dist[1]], [0, 0, 1]])
+    # print(xmax - xmin, ymax - ymin)
+        # Warp the second image
+        result_img = cv2.warpPerspective(img2, H_translation.dot(H), (xmax - xmin, ymax - ymin))
+        #final = np.zeros(result_img.shape)
+        #final[translation_dist[1]:translation_dist[1] + h1, translation_dist[0]:translation_dist[0] + w1] = img1
+        #final[:h2, xmax-xmin-w2:] = result_img[:h2, xmax-xmin-w2:]
+        # Overlay the second image on top of the warped first image
+        mask = (img1 == 0)
+        result_img[translation_dist[1]:translation_dist[1] + h1, translation_dist[0]:translation_dist[0] + w1] = result_img[translation_dist[1]:translation_dist[1] + h1, translation_dist[0]:translation_dist[0] + w1]*mask + img1
+
+        plt.imshow(result_img, cmap='afmhot')
+        plt.title('Stitched image')
+        plt.show()
+
+        return result_img, H_translation
+
+    def stitch_scans(self, scans, trace = 'trace up', round_to = 10, counts1=5, counts2=5):
+        '''
+        Stitches together a dictionary of scans. Starts by finding the homography matrix between the first two scans, then
+        stitches the second scan to the first, then find homography matrix between the stitched scan and the third then stitches
+        them together and so on.
+
+        Args:
+        scans (dict): Dictionary of scans with the keys being the row and column number of the scans and the values being the scans themselves.
+                      The scans should be stm scan objects. What is row and column number? Imagine we split the total image into an nxn grid with n being
+                      the number of scans taken in x and y direction. Then the row and column number is the position of the scan in this grid.
+        trace (str): Which trace to use for the stitching. One of 'trace up', 'trace down', 'retrace up' or 'retrace down'. Default is 'trace up'.
+        
+        Returns:
+        stitched_scan (numpy.ndarray): The stitched scans
+        '''
+        
+        # make a dictionary of the scans with the key being the row and column number of the scan
+        # and the value being the scan itself as a numpy array
+        scans_np = {}
+        for key, scan in scans.items():
+            if trace == 'trace up':
+                if scan.trace_up_proc is None:
+                    print("No processed trace up found for scan", key)
+                else:
+                    scans_np[key] = scan.trace_up_proc
+            elif trace == 'trace down':
+                if scan.trace_down_proc is None:
+                    print("No processed trace down found for scan", key)
+                else:
+                    scans_np[key] = scan.trace_down_proc
+            elif trace == 'retrace up':
+                if scan.retrace_up_proc is None:
+                    print("No processed retrace up found for scan", key)
+                else:
+                    scans_np[key] = scan.retrace_up_proc
+            elif trace == 'retrace down':
+                if scan.retrace_down_proc is None:
+                    print("No processed retrace down found for scan", key)
+                else:
+                    scans_np[key] = scan.retrace_down_proc
+
+        stitched_scan = scans_np[(0,0)]
+        homographies = {} # store the homography matrices between each scan
+        translations = {} # store the translation between each scan
+        # for each scan, find the homography matrix between it and all it's neighbours before moving on to the next scan
+        added_scans = [(0,0)]
+        for key, scan in scans_np.items():
+            neighbour_keys = [(key[0]+1, key[1]), (key[0], key[1]+1), (key[0]-1, key[1]), (key[0], key[1]-1), (key[0]+1, key[1]+1), (key[0]-1, key[1]-1), (key[0]+1, key[1]-1), (key[0]-1, key[1]+1)]
+            for neighbour_key in neighbour_keys:
+                print(key, neighbour_key)
+                if neighbour_key not in scans_np:
+                    continue
+                if neighbour_key in added_scans:
+                    continue
+                neighbour = scans_np[neighbour_key]
+                # get homography
+                H_mask = self.find_homography(stitched_scan, neighbour, threshold=1, show_plot=True, round_to = round_to, counts1 = counts1, counts2=counts2)
+                if H_mask is None:
+                    print("No homography matrix found between", key, "and", neighbour_key)
+                    prompt = input("Do you want to continue? y/n")
+                    if prompt == 'n':
+                        return stitched_scan
+                    else:
+                        continue
+                else:
+                    homographies[(key, neighbour_key)] = np.linalg.inv(H_mask[0])
+                # find full homography matrix for this scan by multiplying the homography matrices between it and (0,0)
+                # find which matrices it needs
+                # matrices = []
+
+                # stitch the old stitched scan with the new scan
+                stitched_scan, translations[(key,neighbour_key)] = self.stitch_two_scans(stitched_scan, neighbour, homographies[(key, neighbour_key)])
+                added_scans.append(neighbour_key)
+        
+
+        return stitched_scan
+"""
+        
 
 
 if __name__ == "__main__":

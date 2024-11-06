@@ -45,9 +45,13 @@ class STM(object):
             # they are in nm
             self.width = None
             self.height = None
-            self.standard_pix_ratio = scan_dict['standard_pix_ratio'] 
+            
+            if 'standard_pix_ratio' in scan_dict:
+                self.standard_pix_ratio = scan_dict['standard_pix_ratio'] 
+            # if false, we define it in _open_file as whatever it is in the scan
+            
             # open the topography file using access to the matrix. It is returned as a dictionary of the traces and retraces
-            self.data = self._open_file(self.file)
+            self.data = self._open_file(self.file, scan_dict)
             
             self.trace_up = self.data[0][::-1,:]
             # assumes the second scan will always be the retrace (i.e. we never have just an trace up and trace down with no retraces)
@@ -57,6 +61,9 @@ class STM(object):
                 self.trace_down = self.data[2][::-1,:]
             if len(self.data)==4:
                 self.retrace_down = self.data[3][::-1,:]
+
+            
+            
 
             # these will be used to store the processed data
             self.trace_up_proc = None
@@ -108,11 +115,12 @@ class STM(object):
                 self.height = scan_dict['height']
 
 
-    def _open_file(self, file):
+    def _open_file(self, file, scan_dict):
         '''
         Opens the file and returns a dictionary of the traces and retraces.
         parameters:
             file (str): The file path of the image.
+            scan_dict (dict): The dictionary of the scan + metadata.
         returns:
             dictionary_of_images (dict): A dictionary of the traces and retraces.
         '''
@@ -136,7 +144,9 @@ class STM(object):
             width = int(im.width*1e9)
             nm_to_pix_ratio = im.data.shape[0]/width
             
-            if self.standard_pix_ratio:
+            if 'standard_pix_ratio' not in scan_dict:
+                self.standard_pix_ratio = nm_to_pix_ratio
+            elif self.standard_pix_ratio:
                 if nm_to_pix_ratio != self.standard_pix_ratio:
                     if nm_to_pix_ratio == 2*self.standard_pix_ratio:
                         print('Pixel to nm ratio is twice as large as desired in', scan_, '. Pixels will be halved so that feature detection can be carried out on surface.')
@@ -247,7 +257,7 @@ class STM(object):
      
         return array_leveled
 
-    def correct_hysteresis(self, trace, retrace, up_down):
+    def correct_hysteresis(self, trace, retrace, up_down, k_only=False, show_plot=False):
         '''
         Corrects the hysteresis in the scan. Assumes the scan is square. Returns the corrected trace and retrace.
         Also corrects the unprocessed trace and retrace so that the hysteresis correction is consistent and redefines 
@@ -266,11 +276,16 @@ class STM(object):
             trace (np.array): The trace of the scan.
             retrace (np.array): The retrace of the scan.
             up_down (str): Whether the scan is a trace up or trace down. Should be one of ['trace up', 'trace down'].
+            k_only (bool): Whether to return only the k3 value.
+            show_plot (bool): Whether to show the matches found by SIFT.
         Returns:
-            tracec (np.array): The corrected trace.
-            retracec (np.array): The corrected retrace.
-            possible (bool): Whether the hysteresis correction was possible.    
-       
+            if k_only is True:
+                k3 (float): The k3 value.
+                len(new_matches) (int): The number of matches found by SIFT.
+            else:
+                tracec (np.array): The corrected trace.
+                retracec (np.array): The corrected retrace.
+                possible (bool): Whether the hysteresis correction was possible.    
         '''
 
         
@@ -290,7 +305,7 @@ class STM(object):
         matches = bf.match(des1,des2)
 
         # Sort them in the order of their distance.
-        matches = sorted(matches, key = lambda x:x.distance)
+        # matches = sorted(matches, key = lambda x:x.distance)
 
         # Draw first 10 matches.
         #img3 = cv2.drawMatches(bmap1, kp1, bmap2, kp2, matches, None, flags=2)
@@ -299,22 +314,21 @@ class STM(object):
         # Now we have all the matches, we want to filter them. Not all of them are correct.
         # We filter by requiring that the y displacement is no more than a pixel and the 
         # x displacement is +/- 15pixels (if res=512). X is larger due to hysteresis
-        new_matches = []
-        coord1s = []
-        coord2s = []
-        for match in matches:
-            coord1 = kp1[match.queryIdx].pt
-            coord2 = kp2[match.trainIdx].pt
-            dy = 1/512 * res  # calculate dy and dx depending on the resolution
-            dx = 15/512 * res
-            if coord1[0]<(coord2[0] + dx) and coord1[0]>(coord2[0] - dx):
-                if coord1[1]<(coord2[1] + dy) and coord1[1]>(coord2[1] - dy): 
-                    new_matches.append(match)
-                    coord1s.append(coord1)
-                    coord2s.append(coord2)
+        dy = 1/512 * res  # calculate dy and dx depending on the resolution
+        dx = 50/512 * res
+        match_coords = np.array([[kp2[m.trainIdx].pt[0], kp2[m.trainIdx].pt[1], kp1[m.queryIdx].pt[0], kp1[m.queryIdx].pt[1]] for m in matches])
+        # find the matches that are within the dx and dy
+        dx_of_matches = np.abs(match_coords[:,0] - match_coords[:,2])<dx  
+        dy_of_matches = np.abs(match_coords[:,1] - match_coords[:,3])<dy
+        valid_indices = (dx_of_matches & dy_of_matches).astype(int)
+        new_matches = list(np.array(matches)[valid_indices==1])
+        coord1s = [kp1[match.queryIdx].pt for match in new_matches]
+        coord2s = [kp2[match.trainIdx].pt for match in new_matches]
 
-        # Draw first 10 matches.
-        img4 = cv2.drawMatches(bmap1, kp1, bmap2, kp2, new_matches[:], None, flags=2)
+        if show_plot:
+            # Draw the new matches
+            img4 = cv2.drawMatches(bmap1, kp1, bmap2, kp2, new_matches, None, flags=2)
+            plt.imshow(img4), plt.show()
 
         if new_matches == []:
             print('No matches were found between trace and retrace. Hysteresis correction cannot be carried out.')
@@ -331,7 +345,10 @@ class STM(object):
             k = (p_t-p_rt)/(np.sin(np.pi*p_t/(res))+np.sin(np.pi*p_rt/(res)))
             ks.append(k)
         k3 = np.mean(ks)
-        print('k3:', k3)
+        #print('k3:', k3)
+
+        if k_only:
+            return k3, len(new_matches)
         
         tracec = trace.copy()
         retracec = retrace.copy()
@@ -349,10 +366,11 @@ class STM(object):
         
         for i in range(res):
             x_new = int(round(i - k3*np.sin(np.pi*i/res)/2,0))
-            for j in range(res):
-                #print(i, x_new)
-                retracec[j,i] = retrace[j,x_new]
-                unproc_retracec[j,i] = unproc_retrace[j,x_new]
+            if x_new < res:
+                for j in range(res):
+                    #print(i, x_new)
+                    retracec[j,i] = retrace[j,x_new]
+                    unproc_retracec[j,i] = unproc_retrace[j,x_new]
         if up_down == 'trace up':
             self.retrace_up = unproc_retracec
         if up_down == 'trace down':
@@ -362,26 +380,25 @@ class STM(object):
         # now correct the trace
         # correct hysterisis on scans that were not plane levelled/scan line aligned
         if up_down == 'trace up':
-       #     unproc_tracec = self.trace_up
             unproc_trace = self.trace_up.copy()
             unproc_tracec = self.trace_up.copy() # this will be the corrected version
         elif up_down == 'trace down':
-       #     unproc_tracec = self.trace_down
             unproc_trace = self.trace_down.copy()
             unproc_tracec = self.trace_down.copy() # this will be the corrected version
         
         for i in range(res):
             x_new = int(round(i + k3*np.sin(np.pi*i/res)/2,0))
-            for j in range(res):
-                #print(i, x_new)
-                tracec[j,i] = trace[j,x_new]
-                unproc_tracec[j,i] = unproc_trace[j,x_new]
+            if x_new < res:
+                for j in range(res):
+                    #print(i, x_new)
+                    tracec[j,i] = trace[j,x_new]
+                    unproc_tracec[j,i] = unproc_trace[j,x_new]
         if up_down == 'trace up':
             self.trace_up = unproc_tracec
         if up_down == 'trace down':
             self.trace_down = unproc_tracec
 
-        return tracec, retracec, True
+        return tracec, retracec, True, k3
     
     def save_scan(self, scan, trace_or_retrace, file=False):
         '''
