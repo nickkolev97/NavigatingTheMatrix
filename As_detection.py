@@ -937,7 +937,7 @@ class Detector(object):
                 
         # find dark features
         torch.manual_seed(0)
-        si_scan.mask_DV = self.UNET_predict(patches2, self.UNETdark, sqrt_num_patches2, res, patch_res = win_size_step)
+        si_scan.mask_DV = self.UNET_predict(patches1, self.UNETdark, sqrt_num_patches, res, patch_res = win_size_def)
     
         # find step edges
         torch.manual_seed(0)
@@ -953,14 +953,11 @@ class Detector(object):
             # otherwise, we are examining an actual connected component
             else:
                 area = stats[i, cv2.CC_STAT_AREA]
-                if area<(0.0004*res**2):
+                if area<(0.0008*res**2):
                     unet_prediction3[labels == i] = 0 
 
         si_scan.mask_step_edges = unet_prediction3
                 
-
-        # Define the structuring element (kernel)
-        kernel = np.ones((3, 3), np.uint8)  # 3x3 kernel
 
        # print('bright features')
        # plt.imshow(cv2.dilate(si_scan.mask_bright_features.astype('uint8'), kernel, iterations=2))
@@ -1279,7 +1276,7 @@ class segmented_scan_stitcher(object):
             elif valid[2] == 'full':   
                 H_type = 'full'
             elif valid[2] == 'trans':
-                translation = self._get_translation(unique_good, kp1, kp2)
+                translation = self._get_translation(unique_good, matchesMask, kp1, kp2)
                 H = np.array([[1, 0, translation[0]], [0, 1, translation[1]], [0, 0, 1]])
                 H_type = 'trans'
                 
@@ -1322,7 +1319,7 @@ class segmented_scan_stitcher(object):
                         Hs.append(H)
                         H_types.append('full')
                     elif valid[2] == 'trans':
-                        translation = self._get_translation(unique_good_split[i], kp1, kp2)
+                        translation = self._get_translation(unique_good_split[i], mask, kp1, kp2)
                         H = np.array([[1, 0, translation[0]], [0, 1, translation[1]], [0, 0, 1]])
                         Hs.append(H)
                         H_types.append('trans')
@@ -1436,17 +1433,19 @@ class segmented_scan_stitcher(object):
         size_change = area_transformed/area_original
         return size_change
 
-    def _get_translation(self, matches, kp1, kp2):
+    def _get_translation(self, matches, matches_mask, kp1, kp2):
         '''
         Finds average translation from matches.
         Args:
         matches (list): List of matches
+        matches_mask (list): List of 0 and 1 to indicate if the match is an inlier
         kp1 (list): List of keypoints from the first channel (query)
         kp2 (list): List of keypoints from the second channel (train)
         Returns:
         translation (numpy.ndarray): The translation in (x,y).
         '''
-        translation = np.mean([np.array(kp2[m.trainIdx].pt) - np.array(kp1[m.queryIdx].pt) for m in matches], axis=0)
+        matches = [np.array(kp2[m.trainIdx].pt) - np.array(kp1[m.queryIdx].pt) for m in matches] * np.array(matches_mask).reshape(-1,1)
+        translation = np.sum(matches, axis=0)/np.sum(matches_mask)
         return translation
 
     def translation_filter(self, matches, kp1, kp2, round_to = 10, counts_thresh=4):
