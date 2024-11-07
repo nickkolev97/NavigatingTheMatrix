@@ -8,7 +8,7 @@ import torch
 import models as mo
 import networkx as nx
 import gc
-import dask.array as da # for operating on large arrays
+#import dask.array as da # for operating on large arrays
 
 from copy import deepcopy
 from collections import deque
@@ -34,13 +34,13 @@ model4 = mo.Classifier(channels=2, crop_size=11, n_outputs=4, fc_layers=2, fc_no
 model5 = mo.Classifier(channels=2, crop_size=11, n_outputs=5, fc_layers=2, fc_nodes=100, dropout=0.2) # Arsine present
 
 # load models
-cwd = Path.cwd() # get current working directory
-UNet1 = load_model(UNET1, Path.joinpath(cwd,'models', 'UNet_bright.pth') ) # UNET finding bright features
-UNet2 = load_model(UNET2, Path.joinpath(cwd,'models', 'UNet_DV_new_(scanlines_dark+creep)2.pth') ) # UNET finding dark features/dimer vacancies
-UNet3 = load_model(UNET3, Path.joinpath(cwd,'models', 'UNet_steps_new_.pth') ) # UNET finding step edges
+this_dir = Path(__file__).resolve().parent
+UNet1 = load_model(UNET1, Path.joinpath(this_dir, 'models', 'UNet_bright.pth') ) # UNET finding bright features
+UNet2 = load_model(UNET2, Path.joinpath(this_dir, 'models', 'UNet_DV_new_(scanlines_dark+creep)2.pth') ) # UNET finding dark features/dimer vacancies
+UNet3 = load_model(UNET3, Path.joinpath(this_dir, 'models', 'UNet_steps_new_.pth') ) # UNET finding step edges
 
-model4 = load_model(model4, Path.joinpath(cwd,'models', 'Si(001)-H_classifier.pth') ) # 98% train acc, 91%test acc (1DB, 2DB, an, background)
-model5 = load_model(model5, Path.joinpath(cwd,'models', 'Si(001)-H+AsH3_classifier.pth') ) # 92% train acc, 90%test acc (1DB, 2DB, an, background, As)
+model4 = load_model(model4, Path.joinpath(this_dir, 'models', 'Si(001)-H_classifier.pth') ) # 98% train acc, 91%test acc (1DB, 2DB, an, background)
+model5 = load_model(model5, Path.joinpath(this_dir, 'models', 'Si(001)-H+AsH3_classifier.pth') ) # 92% train acc, 90%test acc (1DB, 2DB, an, background, As)
 
 # set models to eval mode
 UNET1.eval()
