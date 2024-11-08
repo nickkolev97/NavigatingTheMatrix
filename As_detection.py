@@ -919,29 +919,26 @@ class Detector(object):
         # patches for UNets for bright  (patch size is 32)
         dim = int(res//win_size)
         sqrt_num_patches = ((res-win_size)//(win_size//2)+1)
-        patches1 = np.reshape( pat.patchify(array, (win_size, win_size), step = win_size//2), ( ( sqrt_num_patches**2 , 1, win_size,win_size) ) )
-        # normalise and turn to tensor
-        patches1 = self.norm2(torch.tensor(patches1).float())
-        
+       
         # patches for UNets for step and dark features(patch size is 64)
         dim2 = int(res//win_size)
-        sqrt_num_patches2 = ((res-win_size)//(win_size//2)+1)
-        patches2 = np.reshape( pat.patchify(array, (win_size, win_size), step = win_size//2), ( ( sqrt_num_patches2**2 , 1, win_size,win_size) ) )
+        sqrt_num_patches = ((res-win_size)//(win_size//2)+1)
+        patches = np.reshape( pat.patchify(array, (win_size, win_size), step = win_size//2), ( ( sqrt_num_patches**2 , 1, win_size,win_size) ) )
         # normalise and turn to tensor
-        patches2 = self.norm2(torch.tensor(patches2).float())
+        patches = self.norm2(torch.tensor(patches).float())
    
 
         # find bright features
         torch.manual_seed(0)
-        si_scan.mask_bright_features = self.UNET_predict(patches2, self.UNETbright, sqrt_num_patches2, res, patch_res = win_size)
+        si_scan.mask_bright_features = self.UNET_predict(patches, self.UNETbright, sqrt_num_patches, res, patch_res = win_size)
                 
         # find dark features
         torch.manual_seed(0)
-        si_scan.mask_DV = self.UNET_predict(patches2, self.UNETdark, sqrt_num_patches2, res, patch_res = win_size)
+        si_scan.mask_DV = self.UNET_predict(patches, self.UNETdark, sqrt_num_patches, res, patch_res = win_size)
     
         # find step edges
         torch.manual_seed(0)
-        unet_prediction3 = self.UNET_predict(patches2, self.UNETstep, sqrt_num_patches2, res, patch_res = win_size)
+        unet_prediction3 = self.UNET_predict(patches, self.UNETstep, sqrt_num_patches, res, patch_res = win_size)
 
         # get rid of any step edges that that are small since these probably aren't step edges
         connected_comps = cv2.connectedComponentsWithStats(unet_prediction3.astype(np.uint8))#, args["connectivity"], cv2.CV_32S)
