@@ -140,11 +140,11 @@ class Si_Scan(object):
         self.features = {}
 
         if As:
-            self.coords_probs_vars = np.zeros( (1,10) )
-            self.classes = 5
-        else:
             self.coords_probs_vars = np.zeros( (1,8) )
             self.classes = 4
+        else:
+            self.coords_probs_vars = np.zeros( (1,7) )
+            self.classes = 3
 
         print('Resolution of image is {} by {}'.format(self.xres, self.yres))
         self.one_hot_segmented = None
@@ -601,15 +601,26 @@ class Detector(object):
         recentre mean to 0. Used for the window classifiers
         '''
         if len(array.shape)==4:
-            mean_f = np.expand_dims(np.mean(array[:,0,:,:] , axis=(1,2) ), axis=(1,2) )
-            mean_e = np.expand_dims(np.mean(array[:,1,:,:] , axis=(1,2) ), axis=(1,2) )
-            array[:,0,:,:] = array[:,0,:,:] - mean_f
-            array[:,1,:,:] = array[:,1,:,:] - mean_e
+            mean_f = np.expand_dims(np.mean(array[0,:,:,0] , axis=(0,1) ), axis=(0,1) )
+            mean_e = np.expand_dims(np.mean(array[0,:,:,1] , axis=(0,1) ), axis=(0,1) )
+            array[0,:,:,0] = array[0,:,:,0] - mean_f
+            array[0,:,:,1] = array[0,:,:,1] - mean_e
         if len(array.shape)==3:
             mean_f = np.mean(array)
             array = array - mean_f
         return array
     
+    def norm1_(self, array):
+        '''
+        recentre mean to 0. Used for the window classifiers
+        '''
+        if len(array.shape)==4:
+            mean_f = torch.mean(array[0,0,:,:] )
+            mean_e = torch.mean(array[0,1,:,:] )
+            array[0,0,:,:] = (array[0,0,:,:] - mean_f)/torch.std(array[0,0,:,:])
+            array[0,1,:,:] = (array[0,1,:,:] - mean_e)/torch.std(array[0,1,:,:])
+        return array
+
     def norm2(self, array):
         '''
         Max/min normalisation for torch tensors.
@@ -841,7 +852,6 @@ class Detector(object):
         else:
             window = np.expand_dims(scan[y-self.crop_size:y+self.crop_size, x-self.crop_size:x+self.crop_size,:], axis=(0) ).copy()
         
-
         # training data was standardised so that each bright feature was centered on 
         # brightest pixel (separately for filled and empty states).
         # Must do the same for real data. We do so iteratively (recentre twice at most)
@@ -860,6 +870,7 @@ class Detector(object):
             
         coord =  coord_f.copy() - self.crop_size
 
+       
         #distances = np.sqrt(np.sum((coord-self.crop_size-DVcoords.T)**2, axis=1))
         #if (distances>min_dist).all():
         # if you want to not include the ones that are too close to DVs then uncomment the above lines 
@@ -867,19 +878,25 @@ class Detector(object):
 
 
         window = np.transpose(window, (0,3,1,2))
-        # normalise
-        window = self.norm1(window)
-        
         self.windows.append(window)
+        window = self.norm1_(torch.tensor(window).float())
+        #print(window.shape)
+        #print('np mean 0:', np.mean(window[0,:,:,0]))
+        #print('np mean 1:', np.mean(window[0,:,:,1]))
+        # normalise
+        #window = torch.tensor(window).float()
+       # print('torch mean 0:', torch.mean(window[0,:,:,0]))
+       # print('torch mean 1:', torch.mean(window[0,:,:,1]))
+        
         #plt.imshow(window[0,0,:,:], cmap='afmhot')
         #plt.show()
         if si_scan.As:
             # for ensemble model
             torch.manual_seed(0)
-            y = self.model_As(torch.tensor(window).float())
+            y = self.model_As(window)
         elif not si_scan.As:     
             torch.manual_seed(0)
-            y = self.model_DB(torch.tensor(window).float())
+            y = self.model_DB(window)
         prediction = torch.argmax(y)+1
         if prediction == 1:
             si_scan.feature_coords['oneDB'].append(coord-self.crop_size)
@@ -2457,12 +2474,15 @@ if __name__ == "__main__":
     cwd = Path.cwd() # current working directory
     path = cwd / 'examples' / '20181123-122007_STM_AtomManipulation-Earls Court-Si(100)-H term--26_1.Z_mtrx'
     # make an STM object from NavigatingTheMatrix file
-    scan = nvm.STM( str(path) , None, None, None, standard_pix_ratio=512/100)
+    scan_dict = {'file': str(path), 
+                'standard_pix_ratio': 1024/200
+                }
+    scan = nvm.STM(scan_dict)
     # clean up the scans
     scan.clean_up(scan.trace_down, 'trace down', plane_level=True)
     scan.clean_up(scan.retrace_down, 'retrace down', plane_level=True)
     # correct hysteresis
-    scan.trace_down_proc, scan.retrace_down_proc, corrected = scan.correct_hysteresis(scan.trace_down_proc, scan.retrace_down_proc, 'trace down')
+    scan.trace_down_proc, scan.retrace_down_proc, corrected, k = scan.correct_hysteresis(scan.trace_down_proc, scan.retrace_down_proc, 'trace down')
     # make a Si_scan object just for trace down
     trace_down = Si_Scan(scan, 'trace down', As=True)
     # make detector object to find and label defects
@@ -2472,11 +2492,12 @@ if __name__ == "__main__":
     # turn output into rgb image
     trace_down.rgb = detector.turn_rgb(trace_down.one_hot_segmented)
     ic(trace_down.feature_coords['As'])
+    np.save('ec_features.npy', detector.windows)
     # find distances between features
-    trace_down.feature_dists()
+   # trace_down.feature_dists()
     # filter for distances and certain feature types
-    trace_down.find_pairs('As', 'As', max_dist = 20, min_dist = 15)
-    trace_down.find_pairs('As', 'oneDB', max_dist = 15, min_dist = 10)
+   # trace_down.find_pairs('As', 'As', max_dist = 20, min_dist = 15)
+   # trace_down.find_pairs('As', 'oneDB', max_dist = 15, min_dist = 10)
     # show final segmentation
     plt.imshow(trace_down.rgb)
     plt.show()
