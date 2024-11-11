@@ -593,7 +593,7 @@ class Detector(object):
             # legend dictionary corresponding to colours used in final segmentation
             self.legend = {(150/255, 100/255, 50/255): 'background', (0, 1, 0): 'step edges', (0, 0, 1): 'dark feature', 
                            (1, 1, 0): 'single DB', (0, 1, 1): 'double DB', (1,0,1): 'anomalies', 
-                           (1,1,1): 'cluster',  (0,0,0): 'As', }
+                           (1,1,1): 'too close to DV',  (0,0,0): 'As', }
 
 
     def norm1(self, array):
@@ -914,7 +914,7 @@ class Detector(object):
             
         return y, prediction, coord-self.crop_size
 
-    def predict(self, si_scan, win_size_def=32, win_size_step=64):
+    def predict(self, si_scan, win_size=32):
         '''
         Outputs a fully segmented image of the scan.
 
@@ -933,32 +933,29 @@ class Detector(object):
 
         # max/min normalise
         array = (array-np.min(array))/(np.max(array)-np.min(array))
-        # patches for UNets for bright and dark features (patch size is 32)
-        dim = int(res//win_size_def)
-        sqrt_num_patches = ((res-win_size_def)//(win_size_def//2)+1)
-        patches1 = np.reshape( pat.patchify(array, (win_size_def, win_size_def), step = win_size_def//2), ( ( sqrt_num_patches**2 , 1, win_size_def,win_size_def) ) )
+        # patches for UNets for bright  (patch size is 32)
+        dim = int(res//win_size)
+        sqrt_num_patches = ((res-win_size)//(win_size//2)+1)
+       
+        # patches for UNets for step and dark features(patch size is 64)
+        dim2 = int(res//win_size)
+        sqrt_num_patches = ((res-win_size)//(win_size//2)+1)
+        patches = np.reshape( pat.patchify(array, (win_size, win_size), step = win_size//2), ( ( sqrt_num_patches**2 , 1, win_size,win_size) ) )
         # normalise and turn to tensor
-        patches1 = self.norm2(torch.tensor(patches1).float())
-        
-        # patches for UNets for step (patch size is 64)
-        dim2 = int(res//win_size_step)
-        sqrt_num_patches2 = ((res-win_size_step)//(win_size_step//2)+1)
-        patches2 = np.reshape( pat.patchify(array, (win_size_step, win_size_step), step = win_size_step//2), ( ( sqrt_num_patches2**2 , 1, win_size_step,win_size_step) ) )
-        # normalise and turn to tensor
-        patches2 = self.norm2(torch.tensor(patches2).float())
+        patches = self.norm2(torch.tensor(patches).float())
    
 
         # find bright features
         torch.manual_seed(0)
-        si_scan.mask_bright_features = self.UNET_predict(patches1, self.UNETbright, sqrt_num_patches, res, patch_res = win_size_def)
+        si_scan.mask_bright_features = self.UNET_predict(patches, self.UNETbright, sqrt_num_patches, res, patch_res = win_size)
                 
         # find dark features
         torch.manual_seed(0)
-        si_scan.mask_DV = self.UNET_predict(patches2, self.UNETdark, sqrt_num_patches2, res, patch_res = win_size_step)
+        si_scan.mask_DV = self.UNET_predict(patches, self.UNETdark, sqrt_num_patches, res, patch_res = win_size)
     
         # find step edges
         torch.manual_seed(0)
-        unet_prediction3 = self.UNET_predict(patches2, self.UNETstep, sqrt_num_patches2, res, patch_res = win_size_step)
+        unet_prediction3 = self.UNET_predict(patches, self.UNETstep, sqrt_num_patches, res, patch_res = win_size)
 
         # get rid of any step edges that that are small since these probably aren't step edges
         connected_comps = cv2.connectedComponentsWithStats(unet_prediction3.astype(np.uint8))#, args["connectivity"], cv2.CV_32S)
@@ -970,14 +967,11 @@ class Detector(object):
             # otherwise, we are examining an actual connected component
             else:
                 area = stats[i, cv2.CC_STAT_AREA]
-                if area<(0.0004*res**2):
+                if area<(0.0008*res**2):
                     unet_prediction3[labels == i] = 0 
 
         si_scan.mask_step_edges = unet_prediction3
                 
-
-        # Define the structuring element (kernel)
-        kernel = np.ones((3, 3), np.uint8)  # 3x3 kernel
 
        # print('bright features')
        # plt.imshow(cv2.dilate(si_scan.mask_bright_features.astype('uint8'), kernel, iterations=2))
@@ -1296,7 +1290,7 @@ class segmented_scan_stitcher(object):
             elif valid[2] == 'full':   
                 H_type = 'full'
             elif valid[2] == 'trans':
-                translation = self._get_translation(unique_good, kp1, kp2)
+                translation = self._get_translation(unique_good, matchesMask, kp1, kp2)
                 H = np.array([[1, 0, translation[0]], [0, 1, translation[1]], [0, 0, 1]])
                 H_type = 'trans'
                 
@@ -1339,7 +1333,7 @@ class segmented_scan_stitcher(object):
                         Hs.append(H)
                         H_types.append('full')
                     elif valid[2] == 'trans':
-                        translation = self._get_translation(unique_good_split[i], kp1, kp2)
+                        translation = self._get_translation(unique_good_split[i], mask, kp1, kp2)
                         H = np.array([[1, 0, translation[0]], [0, 1, translation[1]], [0, 0, 1]])
                         Hs.append(H)
                         H_types.append('trans')
@@ -1453,17 +1447,19 @@ class segmented_scan_stitcher(object):
         size_change = area_transformed/area_original
         return size_change
 
-    def _get_translation(self, matches, kp1, kp2):
+    def _get_translation(self, matches, matches_mask, kp1, kp2):
         '''
         Finds average translation from matches.
         Args:
         matches (list): List of matches
+        matches_mask (list): List of 0 and 1 to indicate if the match is an inlier
         kp1 (list): List of keypoints from the first channel (query)
         kp2 (list): List of keypoints from the second channel (train)
         Returns:
         translation (numpy.ndarray): The translation in (x,y).
         '''
-        translation = np.mean([np.array(kp2[m.trainIdx].pt) - np.array(kp1[m.queryIdx].pt) for m in matches], axis=0)
+        matches = [np.array(kp2[m.trainIdx].pt) - np.array(kp1[m.queryIdx].pt) for m in matches] * np.array(matches_mask).reshape(-1,1)
+        translation = np.sum(matches, axis=0)/np.sum(matches_mask)
         return translation
 
     def translation_filter(self, matches, kp1, kp2, round_to = 10, counts_thresh=4):
