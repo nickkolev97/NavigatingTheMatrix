@@ -58,7 +58,6 @@ class upsample_m(nn.Module):
     x = self.doubleConv(x)
     return x
 
-
 class UNet_m(nn.Module):
 
     def __init__(self):
@@ -353,3 +352,74 @@ class Classifier(nn.Module):
         else: 
             x = torch.nn.functional.normalize(x)
             return x
+        
+class Autoencoder(nn.Module):
+    def __init__(self, num_convs_between_pools):
+        super(Autoencoder, self).__init__()
+
+        # Encoder
+        encoder_layers = []
+        in_channels = 1
+        out_channels = 32
+
+        for _ in range(num_convs_between_pools):
+            encoder_layers.append(nn.Conv2d(in_channels, out_channels, kernel_size=3, padding='same'))
+            encoder_layers.append(nn.ReLU(inplace=True))
+            encoder_layers.append(nn.BatchNorm2d(out_channels))
+            in_channels = out_channels
+        encoder_layers.append(nn.MaxPool2d(2, 2))  # First MaxPool
+
+        for _ in range(num_convs_between_pools):
+            encoder_layers.append(nn.Conv2d(in_channels, out_channels * 2, kernel_size=3, padding='same'))
+            encoder_layers.append(nn.ReLU(inplace=True))
+            encoder_layers.append(nn.BatchNorm2d(out_channels * 2))
+            in_channels = out_channels * 2
+        encoder_layers.append(nn.MaxPool2d(2, 2))  # Second MaxPool
+
+        self.encoder = nn.Sequential(*encoder_layers)
+
+        # Bottleneck
+        self.bottleneck = nn.Sequential(
+            nn.Conv2d(out_channels * 2, out_channels * 4, kernel_size=3, padding='same'),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(out_channels * 4),
+            nn.Conv2d(out_channels * 4, out_channels * 4, kernel_size=3, padding='same'),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(out_channels * 4),
+        )
+
+        # Decoder
+        decoder_layers = []
+        in_channels = out_channels * 4
+        out_channels = out_channels * 2
+
+        decoder_layers.append(nn.Upsample(scale_factor=2, mode='bilinear'))
+        for _ in range(num_convs_between_pools):
+            decoder_layers.append(nn.Conv2d(in_channels, out_channels, kernel_size=3, padding='same'))
+            decoder_layers.append(nn.ReLU(inplace=True))
+            decoder_layers.append(nn.BatchNorm2d(out_channels))
+            in_channels = out_channels
+
+        decoder_layers.append(nn.Upsample(scale_factor=2, mode='bilinear'))
+        for _ in range(num_convs_between_pools):
+            decoder_layers.append(nn.Conv2d(in_channels, out_channels // 2, kernel_size=3, padding='same'))
+            decoder_layers.append(nn.ReLU(inplace=True))
+            decoder_layers.append(nn.BatchNorm2d(out_channels // 2))
+            in_channels = out_channels // 2
+
+        decoder_layers.append(nn.Conv2d(in_channels, 1, kernel_size=1))
+        decoder_layers.append(nn.Sigmoid())
+        self.decoder = nn.Sequential(*decoder_layers)
+
+    def forward(self, x):
+        # Encoding path
+        enc = self.encoder(x)
+
+        # Bottleneck
+        bottleneck = self.bottleneck(enc)
+
+        # Decoding path
+        out = self.decoder(bottleneck)
+        
+        return out
+    

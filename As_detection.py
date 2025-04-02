@@ -8,7 +8,7 @@ import torch
 import models as mo
 import networkx as nx
 import gc
-import dask.array as da # for operating on large arrays
+#import dask.array as da # for operating on large arrays
 
 from copy import deepcopy
 from collections import deque
@@ -32,15 +32,27 @@ UNET3 = mo.UNet() # step edges
 # classifiers
 model4 = mo.Classifier(channels=2, crop_size=11, n_outputs=4, fc_layers=2, fc_nodes=100, dropout=0.2) # no Arsine
 model5 = mo.Classifier(channels=2, crop_size=11, n_outputs=5, fc_layers=2, fc_nodes=100, dropout=0.2) # Arsine present
+# denoisers
+ae_fill_FFT = mo.Autoencoder(3)
+ae_empty_FFT = mo.Autoencoder(3)
+ae_empty_MSSSIM = mo.Autoencoder(3)
+ae_fill_MSSSIM = mo.Autoencoder(3)
 
 # load models
-cwd = Path.cwd() # get current working directory
-UNet1 = load_model(UNET1, Path.joinpath(cwd,'models', 'UNet_bright.pth') ) # UNET finding bright features
-UNet2 = load_model(UNET2, Path.joinpath(cwd,'models', 'UNet_DV_new_(scanlines_dark+creep)2.pth') ) # UNET finding dark features/dimer vacancies
-UNet3 = load_model(UNET3, Path.joinpath(cwd,'models', 'UNet_steps_new_.pth') ) # UNET finding step edges
+this_dir = Path(__file__).resolve().parent
+# segmentation models
+UNet1 = load_model(UNET1, Path.joinpath(this_dir, 'models', 'UNet_bright.pth') ) # UNET finding bright features
+UNet2 = load_model(UNET2, Path.joinpath(this_dir, 'models', 'UNet_DV_new_(scanlines_dark+creep)2.pth') ) # UNET finding dark features/dimer vacancies
+UNet3 = load_model(UNET3, Path.joinpath(this_dir, 'models', 'UNet_steps_new_.pth') ) # UNET finding step edges
+# classification models
+model4 = load_model(model4, Path.joinpath(this_dir, 'models', 'Si(001)-H_classifier.pth') ) # 98% train acc, 91%test acc (1DB, 2DB, an, background)
+model5 = load_model(model5, Path.joinpath(this_dir, 'models', 'Si(001)-H+AsH3_classifier.pth') ) # 92% train acc, 90%test acc (1DB, 2DB, an, background, As)
 
-model4 = load_model(model4, Path.joinpath(cwd,'models', 'Si(001)-H_classifier.pth') ) # 98% train acc, 91%test acc (1DB, 2DB, an, background)
-model5 = load_model(model5, Path.joinpath(cwd,'models', 'Si(001)-H+AsH3_classifier.pth') ) # 92% train acc, 90%test acc (1DB, 2DB, an, background, As)
+# denoising models
+ae_fill_FFT = load_model(ae_fill_FFT, Path.joinpath(this_dir, 'models', 'ae_fill_FFT_13_01_25.pth') ) # autoencoder for filled states
+ae_empty_FFT = load_model(ae_empty_FFT, Path.joinpath(this_dir, 'models', 'ae_empty_FFT_290125.pth') ) # autoencoder for empty states
+ae_fill_MSSSIM = load_model(ae_empty_MSSSIM, Path.joinpath(this_dir, 'models', 'ae_fill_MSSSIM_16_01_25.pth') ) # autoencoder for empty states
+ae_empty_MSSSIM = load_model(ae_empty_MSSSIM, Path.joinpath(this_dir, 'models', 'ae_empty_MSSSIM_22_01_25.pth') ) # autoencoder for empty states
 
 # set models to eval mode
 UNET1.eval()
@@ -48,6 +60,11 @@ UNET2.eval()
 UNET3.eval()
 model4.eval()
 model5.eval()
+ae_fill_FFT.eval()
+ae_empty_FFT.eval()
+ae_fill_MSSSIM.eval()
+ae_empty_MSSSIM.eval()
+
 
 ############################################################################################
 ### Feature object used for each feature within a scan
@@ -62,6 +79,9 @@ class Feature(object):
         feature_type (str): the type of feature. One of ['oneDB', 'twoDB', 'anomalies', 'As']
         distances (dict): dictionary with distances to other features on the scan
                           key = feature, value = distance in nm
+        angles (dict): dictionary with angles to other features on the scan. Does not include all features like distances does.
+                        Calculation is slower so only the angles between the features that are needed are calculated.
+                        key = feature, value = angle in degrees
     '''
     # create a class for for each feature
     def __init__(self, scan, coord, feature_type):
@@ -73,6 +93,7 @@ class Feature(object):
         # in future, this can be expanded to include the scan the feature is on as well
         # key = feature, value = distance in nm
         self.distances = {}
+        self.angles = {}
     
 #############################################################################################
 #### Scan object that has the ML in it and finds/classifies the different features ##########
@@ -104,7 +125,7 @@ class Si_Scan(object):
         output: output from Detector object
         rgb (numpy array): rgb segmented image of the scan
         res: resolution of the scan in pixels (assumes it's square)
-
+        dimer_angle: angle of dimers in the scan with respect to the x-axis
         '''
 
     def __init__(self, STMScan, trace, As = True):
@@ -140,15 +161,17 @@ class Si_Scan(object):
         self.features = {}
 
         if As:
-            self.coords_probs_vars = np.zeros( (1,10) )
-            self.classes = 5
-        else:
             self.coords_probs_vars = np.zeros( (1,8) )
             self.classes = 4
+        else:
+            self.coords_probs_vars = np.zeros( (1,7) )
+            self.classes = 3
 
         print('Resolution of image is {} by {}'.format(self.xres, self.yres))
         self.one_hot_segmented = None
         self.rgb = None
+
+        self.dimer_angle = self._get_dimer_angle() 
 
         # get rid of initial row of zeros in self.coords_probs
         self.coords_probs_vars = self.coords_probs_vars[1:,:]
@@ -181,7 +204,7 @@ class Si_Scan(object):
 
         return
 
-    def find_pairs(self, feature1_type, feature2_type, max_dist, min_dist, exclusion_defects = ['oneDB', 'twoDB', 'anomalies', 'As'] ,exclusion_dist = False, display_image = False):
+    def find_pairs(self, feature1_type, feature2_type, max_dist, min_dist, exclusion_defects = ['oneDB', 'twoDB', 'anomalies', 'As'], exclusion_dist = False, angle=None, display_image = False):
         '''
         finds pairs of features that are a certain distance from each other.
         it also produces an image of the feature pairs labelled.
@@ -197,12 +220,36 @@ class Si_Scan(object):
             exclusion_dist: if True, then it will exclude pairs of features that have other feature of either 
                             feature1_type or feature2_type within the exclusion_dist of them. (nm)
             display_image: if True, then it will display the image of the feature pairs labelled
+            angle (list): A list of tuples of numbers defining the range of allowed angles between the features and the dimer rows.
+                          e.g. [(350,10), (80,100)] will allow angles between 350 and 10 degrees and 80 and 100 degrees.
+                          If None, then all angles are allowed.
         
         Returns:
             Dictionary with number of feature pair as key and feature pair as value (where a feature is a feature
             object from this .py doc).
           
         '''
+
+        # check object type of inputs
+        if feature1_type not in ['oneDB', 'twoDB', 'anomalies', 'As'] or feature2_type not in ['oneDB', 'twoDB', 'anomalies', 'As']:
+            raise ValueError('feature1_type must be one of "oneDB", "twoDB", "anomalies", "As"')
+        if feature2_type not in ['oneDB', 'twoDB', 'anomalies', 'As'] or feature2_type not in ['oneDB', 'twoDB', 'anomalies', 'As']:
+            raise ValueError('feature2_type must be one of "oneDB", "twoDB", "anomalies", "As"')
+        if exclusion_defects:
+            for defect in exclusion_defects:
+                if defect not in ['oneDB', 'twoDB', 'anomalies', 'As']:
+                    raise ValueError('exclusion_defects must be a subset of ["oneDB", "twoDB", "anomalies", "As"]')
+        if angle is not None:
+            if not isinstance(angle, list):
+                raise ValueError('angle must be a list of tuples of numbers')
+            for ang in angle:
+                if not isinstance(ang, tuple):
+                    raise ValueError('angle must be a list of tuples of numbers')
+                if len(ang)!=2:
+                    raise ValueError('angle must be a list of tuples of numbers')
+                if not isinstance(ang[0], (int, float)) or not isinstance(ang[1], (int, float)):
+                    raise ValueError('angle must be a list of tuples of numbers')
+        
         feature_pairs_dict = {}
         
         pairs_set = set() # set of pairs (used to avoid double counting)
@@ -246,9 +293,42 @@ class Si_Scan(object):
                     new_feature_pairs_dict[pair] = [feature1, feature2]
             feature_pairs_dict = new_feature_pairs_dict
 
+        # find the angle between the pairs and the dimers.
+        # We assume there is no skew in the image (so the dimer rows are at 90 degrees to each other)
+        for pair in feature_pairs_dict.keys():
+            feature1 = feature_pairs_dict[pair][0].coord
+            feature2 = feature_pairs_dict[pair][1].coord
+            angle_with_x_axis = self._find_angle(feature1, feature2)
+            angle_with_dimers = abs(angle_with_x_axis - self.dimer_angle)
+            # save the angle in the feature object
+            feature_pairs_dict[pair][0].angles[feature_pairs_dict[pair][1]] = angle_with_dimers
+            feature_pairs_dict[pair][1].angles[feature_pairs_dict[pair][0]] = angle_with_dimers
+        
+        # filter for angles
+        if angle is not None:
+            new_feature_pairs_dict = {}
+            for angles in angle:
+                for pair in feature_pairs_dict.keys():
+                    feature1 = feature_pairs_dict[pair][0]
+                    feature2 = feature_pairs_dict[pair][1]
+                    dimer_angle = feature1.angles[feature2]
+                    
+                    # check if the angle is within the range
+                    # if angles are something like (350, 10) then we need to check if the angle is less than 10 or greater than 350
+                    # so its an or statement
+                    if angles[0]>angles[1]:
+                        if dimer_angle<=angles[1] or dimer_angle>=angles[0]: 
+                            new_feature_pairs_dict[pair] = [feature1, feature2]
+                    # else both inequalities need to be true
+                    else:
+                        if dimer_angle<=angles[1] and dimer_angle>=angles[0]:
+                            new_feature_pairs_dict[pair] = [feature1, feature2]
+
+            feature_pairs_dict = new_feature_pairs_dict
+
         #ic(feature_pairs_dict)
         if display_image:
-            self.annotate_scan(feature_pairs_dict, [feature1_type, feature2_type], max_dist, min_dist, exclusion_dist=exclusion_dist, exclusion_defects=exclusion_defects)
+            self.annotate_scan(feature_pairs_dict, [feature1_type, feature2_type], max_dist, min_dist, exclusion_dist=exclusion_dist, exclusion_defects=exclusion_defects,angle=angle)
 
         return feature_pairs_dict
       
@@ -389,7 +469,7 @@ class Si_Scan(object):
         
         return feature_quads_dict, i, quads_set
 
-    def annotate_scan(self, dict_ntuplets, features, max_dist, min_dist, exclusion_dist=False, exclusion_defects=[], fig_size = (10,10), legend = True):
+    def annotate_scan(self, dict_ntuplets, features, max_dist, min_dist, exclusion_dist=False, exclusion_defects=[], fig_size = (10,10), legend = True, angle=None):
         """
         Produces a labelled image of the n-tuplet of features
         We draw on the image using PIL
@@ -402,7 +482,9 @@ class Si_Scan(object):
             min_dist: the minimum wanted distance between two features (in nm)
             fig_size: size of figure to be displaye
             legend: if true, include legend (sometimes want it without legend as it's too packed)
-
+            angle: if not None, then this is a list of tuples dictating the range of angles between the features
+                   e.g. [(350,10), (80,100)] will allow angles between 350 and 10 degrees and 80 and 100 degrees.
+                     If None, then all angles are allowed.
         Returns:
             Nothing
         """
@@ -444,13 +526,17 @@ class Si_Scan(object):
                             centre_coords.append(list(centre_coord))
 
         #plt.savefig(scan_c, '{}_labelled_pairs_of_{}_{}'.format(self.scan, feature1, feature2))
-        if exclusion_dist == False:
-            plt.title('{} features with separation between {}nm and {}nm'.format(features, min_dist, max_dist))
-            plt.show()
+        if exclusion_dist == False and angle is not None:
+            plot_title =  '{} features with separation between {}nm and {}nm and angles between in the ranges {}'.format(features, min_dist, max_dist, angle)
+        elif exclusion_dist == False and angle is None:
+            plot_title =  '{} features with separation between {}nm and {}nm'.format(features, min_dist, max_dist)
+        elif exclusion_dist == True and angle is not None:
+            plot_title = '{} features with separation between {}nm and {}nm and angles between in the ranges {} and no features of type {} within {}nm'.format(features, min_dist, max_dist, angle, exclusion_defects, exclusion_dist)
         else:
-            plt.title('{} features with separation between {}nm and {}nm and no features of type {} within {}nm'.format(features, min_dist, max_dist, exclusion_defects, exclusion_dist))
-            plt.show()
-
+            plot_title = '{} features with separation between {}nm and {}nm and no features of type {} within {}nm'.format(features, min_dist, max_dist, exclusion_defects, exclusion_dist)
+        plt.title(plot_title)
+        plt.show()
+        
         # now plot all ntuplets on separate images but smaller
         # if we have more than one ntuplet
 
@@ -545,8 +631,6 @@ class Si_Scan(object):
         angles = [angle1*180/np.pi, angle2*180/np.pi, angle3*180/np.pi]
         return angles
 
-
-
     def oneDhistogram(self, distances, edge, dr, density):
         nbins = edge//dr
         histogram = np.histogram(distances, bins = nbins)
@@ -558,6 +642,77 @@ class Si_Scan(object):
             histogram[0][j] = histogram/normalisation
 
         return histogram
+
+    def _get_dimer_angle(self):
+        ''' 
+        Get angle of dimers using FFT.
+        '''
+        img = self.scan[:,:,0].copy()
+        # Apply Hann window to the image
+        window = np.outer(np.hanning(img.shape[0]), np.hanning(img.shape[1]))
+        img_windowed = img * window
+
+        # Compute the FFT
+        img_fft = np.fft.fftshift(np.fft.fft2(img_windowed))
+        img_fft_magnitude = np.log(np.abs(img_fft) + 1)  # Log scale for better visualization
+
+        # Create a high-pass filter
+        rows, cols = img.shape
+        crow, ccol = rows // 2, cols // 2
+        mask = np.ones((rows, cols), dtype=np.float32)
+        radius = 30  # Filter radius
+        y, x = np.ogrid[:rows, :cols]
+        mask_area = (y - crow) ** 2 + (x - ccol) ** 2 <= radius ** 2
+        mask[mask_area] = 0  # Block low frequencies
+
+        # Apply high-pass filter
+        img_fft_hp = img_fft * mask
+        img_fft_hp_magnitude = np.log(np.abs(img_fft_hp) + 1)
+
+        # Find the maximum in the filtered FFT
+        max_value = np.max(np.abs(img_fft_hp))
+        max_indices = np.unravel_index(np.argmax(np.abs(img_fft_hp)), img_fft_hp.shape)
+
+        # if the sign of dx and dy is the same, the angle is in the second or fourth quadrant
+        # if the sign of dx and dy is different, the angle is in the first or third quadrant
+
+        dx = max_indices[1]-ccol
+        dy = max_indices[0]-crow
+        # no get the angle of the maximum value
+        angle = np.rad2deg(np.arctan(abs(dy)/abs(dx)))
+
+        if dx*dy<0:
+            angle = angle
+        else:
+            angle = 180-angle
+        
+        return angle
+    
+    def _sign(self, x):
+        return 1 if x >= 0 else -1
+
+    def _find_angle(self,coord1,coord2):
+        '''
+        Finds angle between 2 coordinates on scan (usually 2 features) and the x-axis.
+        '''
+        # find the coordinate which is in the top right corner
+
+        x1, y1 = coord1
+        x2, y2 = coord2
+        dx = x2-x1
+        dy = y2-y1
+        angle = abs(np.arctan(-dy/dx))
+        angle = np.rad2deg(angle)
+        if self._sign(dx)>0 and self._sign(dy)<=0:
+            angle = angle
+        elif self._sign(dx)<=0 and self._sign(dy)<=0:
+            angle = 180 - angle
+        elif self._sign(dx)<=0 and self._sign(dy)>0:
+            angle = 180 + angle
+        elif self._sign(dx)>0 and self._sign(dy)>0:
+            angle = 360 - angle
+
+        return angle       
 
 
 class Detector(object):
@@ -586,6 +741,10 @@ class Detector(object):
         self.UNETbright = UNET1
         self.UNETdark = UNET2
         self.UNETstep = UNET3
+        self.denoise_fill_FFT = ae_fill_FFT
+        self.denoise_empty_FFT = ae_empty_FFT
+        self.denoise_fill_MSSSIM = ae_fill_MSSSIM
+        self.denoise_empty_MSSSIM = ae_empty_MSSSIM
 
         if legend != False:
             self.legend = legend
@@ -593,7 +752,7 @@ class Detector(object):
             # legend dictionary corresponding to colours used in final segmentation
             self.legend = {(150/255, 100/255, 50/255): 'background', (0, 1, 0): 'step edges', (0, 0, 1): 'dark feature', 
                            (1, 1, 0): 'single DB', (0, 1, 1): 'double DB', (1,0,1): 'anomalies', 
-                           (1,1,1): 'cluster',  (0,0,0): 'As', }
+                           (1,1,1): 'too close to DV',  (0,0,0): 'As', }
 
 
     def norm1(self, array):
@@ -601,31 +760,44 @@ class Detector(object):
         recentre mean to 0. Used for the window classifiers
         '''
         if len(array.shape)==4:
-            mean_f = np.expand_dims(np.mean(array[:,0,:,:] , axis=(1,2) ), axis=(1,2) )
-            mean_e = np.expand_dims(np.mean(array[:,1,:,:] , axis=(1,2) ), axis=(1,2) )
-            array[:,0,:,:] = array[:,0,:,:] - mean_f
-            array[:,1,:,:] = array[:,1,:,:] - mean_e
+            mean_f = np.expand_dims(np.mean(array[0,0,:,:] , axis=(0,1) ), axis=(0,1) )
+            mean_e = np.expand_dims(np.mean(array[0,1,:,:] , axis=(0,1) ), axis=(0,1) )
+            array[0,:,:,0] = array[0,:,:,0] - mean_f
+            array[0,:,:,1] = array[0,:,:,1] - mean_e
         if len(array.shape)==3:
             mean_f = np.mean(array)
             array = array - mean_f
         return array
     
-    def norm2(self, array):
+    def norm1_(self, array):
         '''
-        Max/min normalisation for torch tensors.
-        Used for the unets
-        Args
-            array: torch tensor of shape  (n , 1, win_size,win_size), n is number of crops
+        recentre mean to 0. Used for the window classifiers
+        '''
+        if len(array.shape)==4:
+            mean_f = torch.mean(array[0,0,:,:] )
+            mean_e = torch.mean(array[0,1,:,:] )
+            array[0,0,:,:] = (array[0,0,:,:] - mean_f)#/torch.std(array[0,0,:,:])
+            array[0,1,:,:] = (array[0,1,:,:] - mean_e)#/torch.std(array[0,1,:,:])
+        return array
+
+    def norm2(self, images):
+        """
+        Min-max normalizes each image in a batch of grayscale images.
         
-        Return:
-            Arrays with 1 as max and 0 as min.
-        '''
-        min_filled = torch.min(torch.min(array[:,0,:,:], dim=1)[0],dim=1)[0].unsqueeze(-1).unsqueeze(-1)
-        max_filled = torch.max(torch.max(array[:,0,:,:], dim=1)[0],dim=1)[0].unsqueeze(-1).unsqueeze(-1)
-
-        array = (array[:,0,:,:]-min_filled)/(max_filled-min_filled)
-
-        return array.unsqueeze(1)
+        Args:
+            images (torch.Tensor): Tensor of shape (n, 1, 256, 256).
+        
+        Returns:
+            torch.Tensor: Min-max normalized tensor of the same shape as input.
+        """
+        # Find the minimum and maximum values for each image
+        min_vals = images.view(images.size(0), -1).min(dim=1)[0].view(-1, 1, 1, 1)
+        max_vals = images.view(images.size(0), -1).max(dim=1)[0].view(-1, 1, 1, 1)
+        
+        # Apply min-max normalization
+        normalized_images = (images - min_vals) / (max_vals - min_vals + 1e-8)  # Add epsilon to avoid division by zero
+        
+        return normalized_images
         
     def norm3(self, array):
         '''
@@ -841,7 +1013,6 @@ class Detector(object):
         else:
             window = np.expand_dims(scan[y-self.crop_size:y+self.crop_size, x-self.crop_size:x+self.crop_size,:], axis=(0) ).copy()
         
-
         # training data was standardised so that each bright feature was centered on 
         # brightest pixel (separately for filled and empty states).
         # Must do the same for real data. We do so iteratively (recentre twice at most)
@@ -860,6 +1031,7 @@ class Detector(object):
             
         coord =  coord_f.copy() - self.crop_size
 
+       
         #distances = np.sqrt(np.sum((coord-self.crop_size-DVcoords.T)**2, axis=1))
         #if (distances>min_dist).all():
         # if you want to not include the ones that are too close to DVs then uncomment the above lines 
@@ -867,19 +1039,24 @@ class Detector(object):
 
 
         window = np.transpose(window, (0,3,1,2))
+        window = self.norm1_(torch.tensor(window).float())
+        #print(window.shape)
+        #print('np mean 0:', np.mean(window[0,:,:,0]))
+        #print('np mean 1:', np.mean(window[0,:,:,1]))
         # normalise
-        window = self.norm1(window)
+        #window = torch.tensor(window).float()
+       # print('torch mean 0:', torch.mean(window[0,:,:,0]))
+       # print('torch mean 1:', torch.mean(window[0,:,:,1]))
         
-        self.windows.append(window)
         #plt.imshow(window[0,0,:,:], cmap='afmhot')
         #plt.show()
         if si_scan.As:
             # for ensemble model
             torch.manual_seed(0)
-            y = self.model_As(torch.tensor(window).float())
+            y = self.model_As(window)
         elif not si_scan.As:     
             torch.manual_seed(0)
-            y = self.model_DB(torch.tensor(window).float())
+            y = self.model_DB(window)
         prediction = torch.argmax(y)+1
         if prediction == 1:
             si_scan.feature_coords['oneDB'].append(coord-self.crop_size)
@@ -897,7 +1074,7 @@ class Detector(object):
             
         return y, prediction, coord-self.crop_size
 
-    def predict(self, si_scan, win_size_def=32, win_size_step=64):
+    def predict(self, si_scan, win_size=32):
         '''
         Outputs a fully segmented image of the scan.
 
@@ -916,32 +1093,29 @@ class Detector(object):
 
         # max/min normalise
         array = (array-np.min(array))/(np.max(array)-np.min(array))
-        # patches for UNets for bright and dark features (patch size is 32)
-        dim = int(res//win_size_def)
-        sqrt_num_patches = ((res-win_size_def)//(win_size_def//2)+1)
-        patches1 = np.reshape( pat.patchify(array, (win_size_def, win_size_def), step = win_size_def//2), ( ( sqrt_num_patches**2 , 1, win_size_def,win_size_def) ) )
+        # patches for UNets for bright  (patch size is 32)
+        dim = int(res//win_size)
+        sqrt_num_patches = ((res-win_size)//(win_size//2)+1)
+       
+        # patches for UNets for step and dark features(patch size is 64)
+        dim2 = int(res//win_size)
+        sqrt_num_patches = ((res-win_size)//(win_size//2)+1)
+        patches = np.reshape( pat.patchify(array, (win_size, win_size), step = win_size//2), ( ( sqrt_num_patches**2 , 1, win_size,win_size) ) )
         # normalise and turn to tensor
-        patches1 = self.norm2(torch.tensor(patches1).float())
-        
-        # patches for UNets for step (patch size is 64)
-        dim2 = int(res//win_size_step)
-        sqrt_num_patches2 = ((res-win_size_step)//(win_size_step//2)+1)
-        patches2 = np.reshape( pat.patchify(array, (win_size_step, win_size_step), step = win_size_step//2), ( ( sqrt_num_patches2**2 , 1, win_size_step,win_size_step) ) )
-        # normalise and turn to tensor
-        patches2 = self.norm2(torch.tensor(patches2).float())
+        patches = self.norm2(torch.tensor(patches).float())
    
 
         # find bright features
         torch.manual_seed(0)
-        si_scan.mask_bright_features = self.UNET_predict(patches1, self.UNETbright, sqrt_num_patches, res, patch_res = win_size_def)
+        si_scan.mask_bright_features = self.UNET_predict(patches, self.UNETbright, sqrt_num_patches, res, patch_res = win_size)
                 
         # find dark features
         torch.manual_seed(0)
-        si_scan.mask_DV = self.UNET_predict(patches2, self.UNETdark, sqrt_num_patches2, res, patch_res = win_size_step)
+        si_scan.mask_DV = self.UNET_predict(patches, self.UNETdark, sqrt_num_patches, res, patch_res = win_size)
     
         # find step edges
         torch.manual_seed(0)
-        unet_prediction3 = self.UNET_predict(patches2, self.UNETstep, sqrt_num_patches2, res, patch_res = win_size_step)
+        unet_prediction3 = self.UNET_predict(patches, self.UNETstep, sqrt_num_patches, res, patch_res = win_size)
 
         # get rid of any step edges that that are small since these probably aren't step edges
         connected_comps = cv2.connectedComponentsWithStats(unet_prediction3.astype(np.uint8))#, args["connectivity"], cv2.CV_32S)
@@ -953,14 +1127,11 @@ class Detector(object):
             # otherwise, we are examining an actual connected component
             else:
                 area = stats[i, cv2.CC_STAT_AREA]
-                if area<(0.0004*res**2):
+                if area<(0.0008*res**2):
                     unet_prediction3[labels == i] = 0 
 
         si_scan.mask_step_edges = unet_prediction3
                 
-
-        # Define the structuring element (kernel)
-        kernel = np.ones((3, 3), np.uint8)  # 3x3 kernel
 
        # print('bright features')
        # plt.imshow(cv2.dilate(si_scan.mask_bright_features.astype('uint8'), kernel, iterations=2))
@@ -1069,22 +1240,147 @@ class Detector(object):
             output[scan[:,:,0]==0] = [0,0,0]
 
         return output
-    
-    '''
-    def density_calc(self, As):
-        # 3rd item in output are the coordinates
-        self.densities = {}
-        self.densities['oneDB'] = self.uniform_density(self.output[2][0])
-        self.densities['twoDB'] = self.uniform_density(self.output[2][0])
-        self.densities['anomalies'] = self.uniform_density(self.output[2][0])
-        if As:    
-            self.densities['As'] = self.uniform_density(self.output[2][4])
-    '''
-    '''
-    def uniform_density(self, coords):
-        # gives a density of features assuming uniform distribution
-        return len(coords)/(self.size**2)
-    '''
+        
+    def remove_noise(self, scan, trace):
+        '''
+        Removes noise from image using ML model.
+        It assumes input image has a 512pixels to every 100nm (change it to this if it isn't!).
+        It also assumes the trace is the filled state, and retrace is the empty state.
+
+        Use after the standard clean up has been carried out (plane level+scan line align).
+
+        Args:
+            scan (STM object): STM object to remove noise from
+            trace (string): 'trace up' or 'trace down' depending on the scan to denoise
+        Returns:
+            Nothing. Changes the scan object in place (the scan.trace_up/down_proc).
+
+        '''
+        # stack the scans
+        if trace == 'trace up':
+            image = np.stack((scan.trace_up_proc, scan.retrace_up_proc), axis=0)
+        elif trace == 'trace down':
+            image = np.stack((scan.trace_down_proc, scan.retrace_down_proc), axis=0)
+        else:
+            raise ValueError('trace must be either "trace up" or "trace down"')
+
+        # plot the two channels
+        plt.figure(figsize=(20,20))
+        plt.subplot(1,2,1)
+        plt.title('Filled state original')
+        plt.imshow(image[0,:,:], cmap='afmhot')
+        plt.subplot(1,2,2)
+        plt.imshow(image[1,:,:], cmap='afmhot')
+        plt.title('Empty state original')
+        plt.show()
+        
+
+        for i in range(3):
+            # select models to use
+            if i == 0 or i == 2:
+                model_fill = self.denoise_fill_FFT
+                model_empty = self.denoise_empty_FFT
+            if i == 1:
+                model_fill = self.denoise_fill_MSSSIM
+                model_empty = self.denoise_empty_MSSSIM
+
+            # prepare image for denoising
+            # model takes crops of 256x256
+            
+            res = image.shape[2]
+            # split filled and empty
+            filled = image[0,:,:].copy()
+            empty = image[1,:,:].copy()
+            
+            win_size = 256
+            step = win_size//2
+            sqrt_num_patches = ((res-win_size)//(win_size//2)+1)
+
+            patches_filled = np.reshape( pat.patchify(filled, (win_size, win_size), step=step), ( ( sqrt_num_patches**2 , 1, win_size,win_size) ) )
+            patches_empty = np.reshape( pat.patchify(empty, (win_size, win_size), step=step), ( ( sqrt_num_patches**2 , 1, win_size,win_size) ) )
+
+            # normalise and turn to tensor
+            patches_filled = self.norm2(torch.tensor(patches_filled).float())
+            patches_empty = self.norm2(torch.tensor(patches_empty).float())
+
+            # remove noise
+            torch.manual_seed(0) # set seed to get reliably reproducible results
+            pred_patches_fill = model_fill(patches_filled).detach().numpy()
+            pred_patches_empty = model_empty(patches_empty).detach().numpy()
+        
+            # min max normalise
+            pred_patches_fill = self.norm2(torch.tensor(pred_patches_fill).float())
+            pred_patches_empty = self.norm2(torch.tensor(pred_patches_empty).float())
+
+            pred_patches_fill = np.reshape(pred_patches_fill, (sqrt_num_patches, sqrt_num_patches, 1, win_size, win_size))
+            pred_patches_empty = np.reshape(pred_patches_empty, (sqrt_num_patches, sqrt_num_patches, 1, win_size, win_size))
+
+            # recombine patches
+            # they have an overlap of 128 pixels. We apply window function to avoid issues at overlap
+            sine_sqd_1d = torch.sin(torch.linspace(0, np.pi, win_size))**2
+            sine_sqd_2d = sine_sqd_1d.unsqueeze(0) * sine_sqd_1d.unsqueeze(1)
+            
+            pred_filled = torch.zeros((res, res))
+            pred_empty = torch.zeros((res, res))
+
+            for i in range(sqrt_num_patches):        
+                for j in range(sqrt_num_patches):
+                    sine_sqd_win = sine_sqd_2d.clone()
+                    # change window function at the edges of border
+                    if j == 0:
+                        sine_sqd_win[:, :step] = sine_sqd_1d.unsqueeze(1) * torch.ones(win_size, step)
+                    elif j == sqrt_num_patches - 1:
+                        sine_sqd_win[:, step:] = sine_sqd_1d.unsqueeze(1) * torch.ones(win_size, step)
+                    if i == 0:
+                        sine_sqd_win[:step, :] = sine_sqd_1d.unsqueeze(0) * torch.ones(step, win_size)
+                    elif i == sqrt_num_patches - 1:
+                        sine_sqd_win[step:, :] = sine_sqd_1d.unsqueeze(0) * torch.ones(step, win_size)
+                    if i == 0 and j == 0:
+                        sine_sqd_win[:step,:step] = 1
+                    if i == sqrt_num_patches - 1 and j == sqrt_num_patches - 1:
+                        sine_sqd_win[step:,step:] = 1
+                    if i == sqrt_num_patches - 1 and j == 0:
+                        sine_sqd_win[step:,:step] = 1
+                    if i == 0 and j == sqrt_num_patches - 1:
+                        sine_sqd_win[:step,step:] = 1
+
+                    pred_filled[i * step:(i * step) + win_size, j * step:(j * step) + win_size] = pred_filled[i * step:(i * step) + win_size, j * step:(j * step) + win_size] + sine_sqd_win * pred_patches_fill[i, j, 0, :, :]     
+                    pred_empty[i * step:(i * step) + win_size, j * step:(j * step) + win_size] = pred_empty[i * step:(i * step) + win_size, j * step:(j * step) + win_size] + sine_sqd_win * pred_patches_empty[i, j, 0, :, :]
+            
+            # redefine image
+            image[0,:,:] = pred_filled.detach().numpy()
+            image[1,:,:] = pred_empty.detach().numpy()
+            
+            # plot the two channels
+            plt.figure(figsize=(20,20))
+            plt.subplot(1,2,1)
+            if i == 0:
+                plt.title('Filled state denoised with FFT')
+            if i == 1:
+                plt.title('Filled state denoised with FFT then MSSSIM')
+            if i == 2:
+                plt.title('Filled state denoised with FFT then MSSSIM then FFT')
+            plt.imshow(image[0,:,:], cmap='afmhot')
+            plt.subplot(1,2,2)
+            plt.imshow(image[1,:,:], cmap='afmhot')
+            if i == 0:
+                plt.title('Filled state denoised with FFT')
+            if i == 1:
+                plt.title('Filled state denoised with FFT then MSSSIM')
+            if i == 2:
+                plt.title('Filled state denoised with FFT then MSSSIM then FFT')
+            plt.show()
+
+            # redefine the scan
+            #if trace == 'trace up':
+            #    scan.trace_up_proc = pred_filled.detach().numpy()
+            #    scan.retrace_up_proc = pred_empty.detach().numpy()
+            #else:
+            #    scan.trace_down_proc = pred_filled.detach().numpy()
+            #    scan.retrace_down_proc = pred_empty.detach().numpy()
+
+        return
+
 
 class segmented_scan_stitcher(object):
     '''
@@ -1180,7 +1476,7 @@ class segmented_scan_stitcher(object):
             matches_list.append([m[0] for m in matches])
             #  First filter: round translations to nearest 'round_to' and only keep matches that have 
             # the same (rounded) translation to at least 'counts1' other matches
-            matches_arr, translations, most_common_trans = self.translation_filter(matches_list[-1], kp1, kp2, round_to, counts2)
+            matches_arr, translations, most_common_trans = self.translation_filter(matches_list[-1], kp1, kp2, round_to, counts1)
             matches_arrs.append(matches_arr)
             translations_list.append(translations)
             most_common_trans_list.append(most_common_trans)
@@ -1279,7 +1575,7 @@ class segmented_scan_stitcher(object):
             elif valid[2] == 'full':   
                 H_type = 'full'
             elif valid[2] == 'trans':
-                translation = self._get_translation(unique_good, kp1, kp2)
+                translation = self._get_translation(unique_good, matchesMask, kp1, kp2)
                 H = np.array([[1, 0, translation[0]], [0, 1, translation[1]], [0, 0, 1]])
                 H_type = 'trans'
                 
@@ -1322,7 +1618,7 @@ class segmented_scan_stitcher(object):
                         Hs.append(H)
                         H_types.append('full')
                     elif valid[2] == 'trans':
-                        translation = self._get_translation(unique_good_split[i], kp1, kp2)
+                        translation = self._get_translation(unique_good_split[i], mask, kp1, kp2)
                         H = np.array([[1, 0, translation[0]], [0, 1, translation[1]], [0, 0, 1]])
                         Hs.append(H)
                         H_types.append('trans')
@@ -1436,17 +1732,19 @@ class segmented_scan_stitcher(object):
         size_change = area_transformed/area_original
         return size_change
 
-    def _get_translation(self, matches, kp1, kp2):
+    def _get_translation(self, matches, matches_mask, kp1, kp2):
         '''
         Finds average translation from matches.
         Args:
         matches (list): List of matches
+        matches_mask (list): List of 0 and 1 to indicate if the match is an inlier
         kp1 (list): List of keypoints from the first channel (query)
         kp2 (list): List of keypoints from the second channel (train)
         Returns:
         translation (numpy.ndarray): The translation in (x,y).
         '''
-        translation = np.mean([np.array(kp2[m.trainIdx].pt) - np.array(kp1[m.queryIdx].pt) for m in matches], axis=0)
+        matches = [np.array(kp2[m.trainIdx].pt) - np.array(kp1[m.queryIdx].pt) for m in matches] * np.array(matches_mask).reshape(-1,1)
+        translation = np.sum(matches, axis=0)/np.sum(matches_mask)
         return translation
 
     def translation_filter(self, matches, kp1, kp2, round_to = 10, counts_thresh=4):
@@ -2457,12 +2755,15 @@ if __name__ == "__main__":
     cwd = Path.cwd() # current working directory
     path = cwd / 'examples' / '20181123-122007_STM_AtomManipulation-Earls Court-Si(100)-H term--26_1.Z_mtrx'
     # make an STM object from NavigatingTheMatrix file
-    scan = nvm.STM( str(path) , None, None, None, standard_pix_ratio=512/100)
+    scan_dict = {'file': str(path), 
+                'standard_pix_ratio': 1024/200
+                }
+    scan = nvm.STM(scan_dict)
     # clean up the scans
     scan.clean_up(scan.trace_down, 'trace down', plane_level=True)
     scan.clean_up(scan.retrace_down, 'retrace down', plane_level=True)
     # correct hysteresis
-    scan.trace_down_proc, scan.retrace_down_proc, corrected = scan.correct_hysteresis(scan.trace_down_proc, scan.retrace_down_proc, 'trace down')
+    scan.trace_down_proc, scan.retrace_down_proc, corrected, k = scan.correct_hysteresis(scan.trace_down_proc, scan.retrace_down_proc, 'trace down')
     # make a Si_scan object just for trace down
     trace_down = Si_Scan(scan, 'trace down', As=True)
     # make detector object to find and label defects
@@ -2472,11 +2773,13 @@ if __name__ == "__main__":
     # turn output into rgb image
     trace_down.rgb = detector.turn_rgb(trace_down.one_hot_segmented)
     ic(trace_down.feature_coords['As'])
+    np.save('ec_features.npy', detector.windows)
     # find distances between features
     trace_down.feature_dists()
     # filter for distances and certain feature types
-    trace_down.find_pairs('As', 'As', max_dist = 20, min_dist = 15)
-    trace_down.find_pairs('As', 'oneDB', max_dist = 15, min_dist = 10)
+    trace_down.find_pairs('As', 'As', max_dist = 50, min_dist =0,angle=[(70,120)], display_image=True)
+    trace_down.find_pairs('As', 'As', max_dist = 50, min_dist =0,angle=[(350,20)], display_image=True)
+    trace_down.find_pairs('As', 'oneDB', max_dist = 15, min_dist = 10, angle=[(0,90)], display_image=True)
     # show final segmentation
-    plt.imshow(trace_down.rgb)
-    plt.show()
+    #plt.imshow(trace_down.rgb)
+   # plt.show()

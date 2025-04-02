@@ -242,6 +242,7 @@ class STM(object):
         X_data = np.array([x_pts, y_pts, x_ptsy_pts, x_ptsx_pts, y_ptsy_pts]).T  # X_data shape: n, 5
         Y_data = z_pts
 
+        
         reg = linear_model.LinearRegression().fit(X_data, Y_data)
 
         print("coefficients of equation of plane, (a1, a2, a3, a4, a5): ", reg.coef_)
@@ -266,7 +267,7 @@ class STM(object):
 
         General method here described in paper "A method to correct hysteresis of scanning probe microscope images based 
         on a sinusoidal model" by Zhang et al with a couple of changes. Change 1: after we find matches with SIFT, we filter
-        them by requiring that the y displacement is no more than a pixel and the x displacement is +/- 15pixels (if res=512).
+        them by requiring that the y displacement is no more than a pixel and the x displacement is +/- 50pixels (if res=512).
         This is because SIFT found a lot of fake matches and an easy way to get rid of them is to filter by these requirements.
         Change 2: we find the new pixel value (x_new = int(round(i + k3*np.sin(np.pi*i/res)/2,0))) has an extra factor of 1/2. 
         I just found this works better.
@@ -480,9 +481,9 @@ def find_homography(img1, img2, threshold = 0.8, algorithm = 'SIFT', show_plot =
         kp1, des1 = sift.detectAndCompute(sift_scan1, None)
         kp2, des2 = sift.detectAndCompute(sift_scan2, None)
 
-        bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+        #bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
         # Match descriptors.
-        matches = bf.match(des1,des2)
+        #matches = bf.match(des1,des2)
 
         FLANN_INDEX_KDTREE = 1
         index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)

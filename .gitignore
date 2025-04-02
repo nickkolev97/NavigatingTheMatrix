@@ -1,0 +1,19 @@
+# scripts 
+
+# notebooks
+hainault_notebook.ipynb
+
+# numpy files
+*.npy
+**/*.npy
+
+
+# slsq project stuff
+SLSQ_traps
+trap_counting_SLSQ_network.ipynb
+trap_counting_SLSQ_network.py
+trap_counting_SLSQ.ipynb
+trap_counting_yolov8.ipynb
+models_for_SLSQ
+synthetic_data
+yolov8_trap_count
