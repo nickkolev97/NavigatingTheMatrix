@@ -2769,13 +2769,13 @@ if __name__ == "__main__":
     # turn output into rgb image
     trace_down.rgb = detector.turn_rgb(trace_down.one_hot_segmented)
     ic(trace_down.feature_coords['As'])
-    np.save('ec_features.npy', detector.windows)
+   # np.save('ec_features.npy', detector.windows)
     # find distances between features
    # trace_down.feature_dists()
     # filter for distances and certain feature types
-    trace_down.find_pairs('As', 'As', max_dist = 50, min_dist =0,angle=[(70,120)], display_image=True)
-    trace_down.find_pairs('As', 'As', max_dist = 50, min_dist =0,angle=[(350,20)], display_image=True)
-    trace_down.find_pairs('As', 'oneDB', max_dist = 15, min_dist = 10, angle=[(0,90)], display_image=True)
+    #trace_down.find_pairs('As', 'As', max_dist = 50, min_dist =0,angle=[(70,120)], display_image=True)
+    #trace_down.find_pairs('As', 'As', max_dist = 50, min_dist =0,angle=[(350,20)], display_image=True)
+    #trace_down.find_pairs('As', 'oneDB', max_dist = 15, min_dist = 10, angle=[(0,90)], display_image=True)
     # show final segmentation
-    #plt.imshow(trace_down.rgb)
-   # plt.show()
+    plt.imshow(trace_down.rgb)
+    plt.show()
