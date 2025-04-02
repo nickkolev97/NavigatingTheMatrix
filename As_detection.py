@@ -8,7 +8,7 @@ import torch
 import models as mo
 import networkx as nx
 import gc
-#import dask.array as da # for operating on large arrays
+
 
 from copy import deepcopy
 from collections import deque
@@ -40,19 +40,13 @@ ae_fill_MSSSIM = mo.Autoencoder(3)
 
 # load models
 this_dir = Path(__file__).resolve().parent
-# segmentation models
+
 UNet1 = load_model(UNET1, Path.joinpath(this_dir, 'models', 'UNet_bright.pth') ) # UNET finding bright features
 UNet2 = load_model(UNET2, Path.joinpath(this_dir, 'models', 'UNet_DV_new_(scanlines_dark+creep)2.pth') ) # UNET finding dark features/dimer vacancies
 UNet3 = load_model(UNET3, Path.joinpath(this_dir, 'models', 'UNet_steps_new_.pth') ) # UNET finding step edges
-# classification models
+
 model4 = load_model(model4, Path.joinpath(this_dir, 'models', 'Si(001)-H_classifier.pth') ) # 98% train acc, 91%test acc (1DB, 2DB, an, background)
 model5 = load_model(model5, Path.joinpath(this_dir, 'models', 'Si(001)-H+AsH3_classifier.pth') ) # 92% train acc, 90%test acc (1DB, 2DB, an, background, As)
-
-# denoising models
-ae_fill_FFT = load_model(ae_fill_FFT, Path.joinpath(this_dir, 'models', 'ae_fill_FFT_13_01_25.pth') ) # autoencoder for filled states
-ae_empty_FFT = load_model(ae_empty_FFT, Path.joinpath(this_dir, 'models', 'ae_empty_FFT_290125.pth') ) # autoencoder for empty states
-ae_fill_MSSSIM = load_model(ae_empty_MSSSIM, Path.joinpath(this_dir, 'models', 'ae_fill_MSSSIM_16_01_25.pth') ) # autoencoder for empty states
-ae_empty_MSSSIM = load_model(ae_empty_MSSSIM, Path.joinpath(this_dir, 'models', 'ae_empty_MSSSIM_22_01_25.pth') ) # autoencoder for empty states
 
 # set models to eval mode
 UNET1.eval()
@@ -760,8 +754,9 @@ class Detector(object):
         recentre mean to 0. Used for the window classifiers
         '''
         if len(array.shape)==4:
-            mean_f = np.expand_dims(np.mean(array[0,0,:,:] , axis=(0,1) ), axis=(0,1) )
-            mean_e = np.expand_dims(np.mean(array[0,1,:,:] , axis=(0,1) ), axis=(0,1) )
+
+            mean_f = np.expand_dims(np.mean(array[0,:,:,0] , axis=(0,1) ), axis=(0,1) )
+            mean_e = np.expand_dims(np.mean(array[0,:,:,1] , axis=(0,1) ), axis=(0,1) )
             array[0,:,:,0] = array[0,:,:,0] - mean_f
             array[0,:,:,1] = array[0,:,:,1] - mean_e
         if len(array.shape)==3:
@@ -1039,6 +1034,7 @@ class Detector(object):
 
 
         window = np.transpose(window, (0,3,1,2))
+        self.windows.append(window)
         window = self.norm1_(torch.tensor(window).float())
         #print(window.shape)
         #print('np mean 0:', np.mean(window[0,:,:,0]))
@@ -2775,7 +2771,7 @@ if __name__ == "__main__":
     ic(trace_down.feature_coords['As'])
     np.save('ec_features.npy', detector.windows)
     # find distances between features
-    trace_down.feature_dists()
+   # trace_down.feature_dists()
     # filter for distances and certain feature types
     trace_down.find_pairs('As', 'As', max_dist = 50, min_dist =0,angle=[(70,120)], display_image=True)
     trace_down.find_pairs('As', 'As', max_dist = 50, min_dist =0,angle=[(350,20)], display_image=True)
