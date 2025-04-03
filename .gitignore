@@ -6,6 +6,11 @@ __pycache__/
 # notebooks
 hainault_notebook.ipynb
 
+# matrix files
+**/*.Z_mtrx
+**/*.mtrx
+
+
 # numpy files
 *.npy
 **/*.npy
