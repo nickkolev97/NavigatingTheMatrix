@@ -566,3 +566,127 @@ def find_homography(img1, img2, threshold = 0.8, algorithm = 'SIFT', show_plot =
         plt.imshow(plot3, cmap='afmhot'), plt.title('Final matches'), plt.show()
     
     return H, mask
+
+##############################
+### Hysteresis correction of lithogrpaphy path
+##############################  
+def quadratic_func(x):
+    a = 3.7E-6
+    b = 0.0087
+    return a * x**2 + b * x 
+
+def correct_path(path, write_field_size):
+    '''
+    Corrects the inaccuracies in path due to hysteresis
+    args:
+    path: path in the form we need for mate script
+    write_field_size: the size of the write field in nm
+    returns:
+    new_path: the corrected path
+    xs: x-values of the raster extremes on each raster line
+
+    '''
+    # steps:
+    # 1. Find the width of each raster line. This will be used to calculate the k value for that line
+    # 2. Find the number of points in each raster line. This will be used to know when we are at the end of a raster line
+    # 3. Correct each point. Correction depends on whether we are in a fwd or bwd trace and raster width.
+
+    # find the number of points in each raster and the k values
+
+    num_points = [0] # number of points per raster, start with 0 
+    raster = 0 #  raster we are currently on
+    
+    # the x values of the raster extremes (needed to calculate the k value of hysteresis)
+    # these should come in pairs [start, end] so xs is list of lists
+    xs = [[path[0][0][0]]] 
+    old_point = path[0][0]
+    for subpath in path:
+        # subpath_array = np.array(subpath)
+        # split the subpath depending on number of different y values
+        for i, point in enumerate(subpath):
+            dy =  point[1] - old_point[1]
+            if np.allclose(point[1], old_point[1]): 
+                # we are still in same raster
+                num_points[raster] += 1
+            else:
+                # we are in a new raster
+                num_points.append(1)
+                raster += 1
+                xs[-1].append(old_point[0])
+                xs.append([point[0]])
+            old_point  = 1*point
+   
+    # add the last x value
+    xs[-1].append(path[-1][-1][0])
+    # we have the extremes of the rasters, now we need to calculate the k values
+    xs_array = np.array(xs)
+    raster_lengths = np.abs(xs_array[:,1] - xs_array[:,0])*write_field_size
+    
+    k_values = [quadratic_func(raster_length)/write_field_size for raster_length in raster_lengths]
+    # now we need to correct the path
+    new_path = []
+    raster = 0
+    npoint = 0
+
+    print('num_points: ', num_points)
+
+   # points = [point for point in subpath for subpath in path] # list for all points (no sublists)
+    for i, subpath in enumerate(path):
+        # find whether we start with a fwd or bwd trace
+        # and define the toggle
+        if subpath[0][0] < subpath[1][0]:
+            # we start with a fwd trace
+            toggle = -1
+        else:
+            # we start with a bwd trace
+            toggle = 1
+        new_subpath = []
+        for l, point in enumerate(subpath):
+            sin_arg = write_field_size*point[0]*np.pi/raster_lengths[raster]
+            correction = np.sum(k_values[raster]*np.sin(sin_arg))
+            new_subpath.append( [ point[0] + toggle*correction, point[1] ] )
+            npoint += 1
+
+            # check if we are at the end of a raster line
+            #print(npoint, num_points[raster])
+            if int(npoint) == int(num_points[raster]):
+                raster += 1
+                npoint = 0
+                toggle = -1*toggle
+            #print(toggle)
+
+
+        new_path.append(new_subpath)
+
+    return new_path, xs, raster
+         
+def plot_lithography_path(path, x_lim = None, y_lim = None):
+    '''
+    Plots a lithography path that is in the format needed for the MATE script 
+    i.e. a list of lists. Each sublist contains a list of points. 
+    In the plot, each sublist (subpath) is a different color (although matplotlib
+    only has so many colours so it may repeat colours).  
+
+    Args:
+        path (list): A list of subpaths, where each subpath is a list of points.
+        x_lim (tuple): Optional. The x-axis limits for the plot.
+        y_lim (tuple): Optional. The y-axis limits for the plot.
+    '''
+
+    for subpath in path:
+        # Convert the subpath to a numpy array
+        subpath = np.array(subpath)
+        
+        # Plot the subpath
+        plt.plot(subpath[:, 0], subpath[:, 1], linestyle='-')
+        
+    # Set the aspect ratio to be equal
+    plt.gca().set_aspect('equal', adjustable='box')
+    if x_lim is not None:
+        plt.xlim(x_lim)
+    if y_lim is not None:
+        plt.ylim(y_lim)
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    plt.title('Lithography Path')
+    plt.show()

@@ -600,16 +600,13 @@ class Detector(object):
         '''
         recentre mean to 0. Used for the window classifiers
         '''
-        if len(array.shape)==4:
-            mean_f = np.expand_dims(np.mean(array[:,0,:,:] , axis=(1,2) ), axis=(1,2) )
-            mean_e = np.expand_dims(np.mean(array[:,1,:,:] , axis=(1,2) ), axis=(1,2) )
-            array[:,0,:,:] = array[:,0,:,:] - mean_f
-            array[:,1,:,:] = array[:,1,:,:] - mean_e
-        if len(array.shape)==3:
-            mean_f = np.mean(array)
-            array = array - mean_f
+        mean_f = torch.mean(array[0,0,:,:] )
+        mean_e = torch.mean(array[0,1,:,:] )
+        array[0,0,:,:] = (array[0,0,:,:] - mean_f)#/torch.std(array[0,0,:,:])
+        array[0,1,:,:] = (array[0,1,:,:] - mean_e)#/torch.std(array[0,1,:,:])
         return array
     
+
     def norm2(self, array):
         '''
         Max/min normalisation for torch tensors.
@@ -868,7 +865,7 @@ class Detector(object):
 
         window = np.transpose(window, (0,3,1,2))
         # normalise
-        window = self.norm1(window)
+        window = self.norm1(torch.tensor(window).float())
         
         self.windows.append(window)
         #plt.imshow(window[0,0,:,:], cmap='afmhot')
@@ -876,10 +873,10 @@ class Detector(object):
         if si_scan.As:
             # for ensemble model
             torch.manual_seed(0)
-            y = self.model_As(torch.tensor(window).float())
+            y = self.model_As(window)
         elif not si_scan.As:     
             torch.manual_seed(0)
-            y = self.model_DB(torch.tensor(window).float())
+            y = self.model_DB(window)
         prediction = torch.argmax(y)+1
         if prediction == 1:
             si_scan.feature_coords['oneDB'].append(coord-self.crop_size)
@@ -950,7 +947,7 @@ class Detector(object):
             # otherwise, we are examining an actual connected component
             else:
                 area = stats[i, cv2.CC_STAT_AREA]
-                if area<(0.0008*res**2):
+                if area<(0.0015*res**2):
                     unet_prediction3[labels == i] = 0 
 
         si_scan.mask_step_edges = unet_prediction3
@@ -2453,12 +2450,15 @@ if __name__ == "__main__":
     cwd = Path.cwd() # current working directory
     path = cwd / 'examples' / '20181123-122007_STM_AtomManipulation-Earls Court-Si(100)-H term--26_1.Z_mtrx'
     # make an STM object from NavigatingTheMatrix file
-    scan = nvm.STM( str(path) , None, None, None, standard_pix_ratio=512/100)
+    scan_dict = {'file': str(path), 
+                'standard_pix_ratio': 1024/200
+                }
+    scan = nvm.STM( scan_dict )
     # clean up the scans
     scan.clean_up(scan.trace_down, 'trace down', plane_level=True)
     scan.clean_up(scan.retrace_down, 'retrace down', plane_level=True)
     # correct hysteresis
-    scan.trace_down_proc, scan.retrace_down_proc, corrected = scan.correct_hysteresis(scan.trace_down_proc, scan.retrace_down_proc, 'trace down')
+    scan.trace_down_proc, scan.retrace_down_proc, corrected, k = scan.correct_hysteresis(scan.trace_down_proc, scan.retrace_down_proc, 'trace down')
     # make a Si_scan object just for trace down
     trace_down = Si_Scan(scan, 'trace down', As=True)
     # make detector object to find and label defects
