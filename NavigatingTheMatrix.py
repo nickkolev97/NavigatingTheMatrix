@@ -60,10 +60,7 @@ class STM(object):
             if 2<len(self.data)<5:
                 self.trace_down = self.data[2][::-1,:]
             if len(self.data)==4:
-                self.retrace_down = self.data[3][::-1,:]
-
-            
-            
+                self.retrace_down = self.data[3][::-1,:]            
 
             # these will be used to store the processed data
             self.trace_up_proc = None
@@ -78,7 +75,6 @@ class STM(object):
                 self.x_offset = scan_dict['x_offset']
             if 'angle' in scan_dict:
                 self.angle = scan_dict['angle']
-                
 
             '''
             Working progress on trying to get the true area of the scan by using FFTs to find lattice parameters.
@@ -164,6 +160,7 @@ class STM(object):
                 print(scan_ + ' scan was interupted before completion. It will not be used.')
             else:
                 dictionary_of_images[i]=im.data
+     
         self.width = int(im.width*1e9)
         self.height = int(im.height*1e9)
         if len(dictionary_of_images)==0:
