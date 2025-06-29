@@ -8,7 +8,7 @@ import torch
 import models as mo
 import networkx as nx
 import gc
-#import dask.array as da # for operating on large arrays
+
 
 from copy import deepcopy
 from collections import deque
@@ -35,12 +35,19 @@ model5 = mo.Classifier(channels=2, crop_size=11, n_outputs=5, fc_layers=2, fc_no
 
 # load models
 this_dir = Path(__file__).resolve().parent
+
 UNet1 = load_model(UNET1, Path.joinpath(this_dir, 'models', 'UNet_bright.pth') ) # UNET finding bright features
 UNet2 = load_model(UNET2, Path.joinpath(this_dir, 'models', 'UNet_DV_new_(scanlines_dark+creep)2.pth') ) # UNET finding dark features/dimer vacancies
 UNet3 = load_model(UNET3, Path.joinpath(this_dir, 'models', 'UNet_steps_new_.pth') ) # UNET finding step edges
 
-model4 = load_model(model4, Path.joinpath(this_dir, 'models', 'Si(001)-H_classifier.pth') ) # 98% train acc, 91%test acc (1DB, 2DB, an, background)
-model5 = load_model(model5, Path.joinpath(this_dir, 'models', 'Si(001)-H+AsH3_classifier.pth') ) # 92% train acc, 90%test acc (1DB, 2DB, an, background, As)
+model4 = load_model(model4, Path.joinpath(this_dir, 'models', 'Si(001)-H_classifier.pth') ) # 98% train acc, 91%test acc (1DB, 2DB, an)
+model5 = load_model(model5, Path.joinpath(this_dir, 'models', 'model_fc2_nodes200_drop0.2.pth') ) # 92% train acc, 86%test acc (1DB, 2DB, an, As)
+#model5 = load_model(model5, Path.joinpath(this_dir, 'models', 'model_fc2_nodes200_drop0.2.pth') ) # 92% train acc, 86%test acc (1DB, 2DB, an, As)
+
+ae_fill_FFT = load_model(ae_fill_FFT, Path.joinpath(this_dir, 'models', 'ae_fill_FFT_13_01_25.pth') ) # denoiser for filled scans
+ae_empty_FFT = load_model(ae_empty_FFT, Path.joinpath(this_dir, 'models', 'ae_empty_FFT_290125.pth') ) # denoiser for empty scans
+ae_fill_MSSSIM = load_model(ae_fill_MSSSIM, Path.joinpath(this_dir, 'models', 'ae_fill_MSSSIM_16_01_25.pth') ) # denoiser for filled scans
+ae_empty_MSSSIM = load_model(ae_empty_MSSSIM, Path.joinpath(this_dir, 'models', 'ae_empty_MSSSIM_22_01_25.pth') ) # denoiser for empty scans
 
 # set models to eval mode
 UNET1.eval()
@@ -48,6 +55,11 @@ UNET2.eval()
 UNET3.eval()
 model4.eval()
 model5.eval()
+ae_fill_FFT.eval()
+ae_empty_FFT.eval()
+ae_fill_MSSSIM.eval()
+ae_empty_MSSSIM.eval()
+
 
 ############################################################################################
 ### Feature object used for each feature within a scan
@@ -62,6 +74,9 @@ class Feature(object):
         feature_type (str): the type of feature. One of ['oneDB', 'twoDB', 'anomalies', 'As']
         distances (dict): dictionary with distances to other features on the scan
                           key = feature, value = distance in nm
+        angles (dict): dictionary with angles to other features on the scan. Does not include all features like distances does.
+                        Calculation is slower so only the angles between the features that are needed are calculated.
+                        key = feature, value = angle in degrees
     '''
     # create a class for for each feature
     def __init__(self, scan, coord, feature_type):
@@ -73,6 +88,7 @@ class Feature(object):
         # in future, this can be expanded to include the scan the feature is on as well
         # key = feature, value = distance in nm
         self.distances = {}
+        self.angles = {}
     
 #############################################################################################
 #### Scan object that has the ML in it and finds/classifies the different features ##########
@@ -104,7 +120,7 @@ class Si_Scan(object):
         output: output from Detector object
         rgb (numpy array): rgb segmented image of the scan
         res: resolution of the scan in pixels (assumes it's square)
-
+        dimer_angle: angle of dimers in the scan with respect to the x-axis
         '''
 
     def __init__(self, STMScan, trace, As = True):
@@ -140,15 +156,17 @@ class Si_Scan(object):
         self.features = {}
 
         if As:
-            self.coords_probs_vars = np.zeros( (1,10) )
-            self.classes = 5
-        else:
             self.coords_probs_vars = np.zeros( (1,8) )
             self.classes = 4
+        else:
+            self.coords_probs_vars = np.zeros( (1,7) )
+            self.classes = 3
 
         print('Resolution of image is {} by {}'.format(self.xres, self.yres))
         self.one_hot_segmented = None
         self.rgb = None
+
+        self.dimer_angle = self._get_dimer_angle() 
 
         # get rid of initial row of zeros in self.coords_probs
         self.coords_probs_vars = self.coords_probs_vars[1:,:]
@@ -181,7 +199,7 @@ class Si_Scan(object):
 
         return
 
-    def find_pairs(self, feature1_type, feature2_type, max_dist, min_dist, exclusion_defects = ['oneDB', 'twoDB', 'anomalies', 'As'] ,exclusion_dist = False, display_image = False):
+    def find_pairs(self, feature1_type, feature2_type, max_dist, min_dist, exclusion_defects = ['oneDB', 'twoDB', 'anomalies', 'As'], exclusion_dist = False, angle=None, display_image = False):
         '''
         finds pairs of features that are a certain distance from each other.
         it also produces an image of the feature pairs labelled.
@@ -194,8 +212,9 @@ class Si_Scan(object):
             feature1_type and feature2_type: the types of feature. One of 'oneDB', 'twoDB', 'anomalies', 'As'
             exclusion_defects(list): List of features to keep outside of exclusions dist of the pair.
                                         Should be a subset of ['oneDB', 'twoDB', 'anomalies', 'As']
-            exclusion_dist: if True, then it will exclude pairs of features that have other feature of either 
-                            feature1_type or feature2_type within the exclusion_dist of them. (nm)
+            exclusion_dist: If False, does not exclude any pairs of features that have some other feature
+                            near them. If a number, then it will exclude pairs of features that have some other features
+                            of type exclusion_defects within the exclusion distance of them. (nm)
             display_image: if True, then it will display the image of the feature pairs labelled
         
         Returns:
@@ -248,7 +267,7 @@ class Si_Scan(object):
 
         #ic(feature_pairs_dict)
         if display_image:
-            self.annotate_scan(feature_pairs_dict, [feature1_type, feature2_type], max_dist, min_dist, exclusion_dist=exclusion_dist, exclusion_defects=exclusion_defects)
+            self.annotate_scan(feature_pairs_dict, [feature1_type, feature2_type], max_dist, min_dist, exclusion_dist=exclusion_dist, exclusion_defects=exclusion_defects,angle=angle)
 
         return feature_pairs_dict
       
@@ -389,7 +408,7 @@ class Si_Scan(object):
         
         return feature_quads_dict, i, quads_set
 
-    def annotate_scan(self, dict_ntuplets, features, max_dist, min_dist, exclusion_dist=False, exclusion_defects=[], fig_size = (10,10), legend = True):
+    def annotate_scan(self, dict_ntuplets, features, max_dist, min_dist, exclusion_dist=False, exclusion_defects=[], fig_size = (10,10), legend = True, angle=None):
         """
         Produces a labelled image of the n-tuplet of features
         We draw on the image using PIL
@@ -438,9 +457,7 @@ class Si_Scan(object):
                             centre_coord = (np.array([y1,x1]) + np.array([y2,x2]))/2
                             while list(centre_coord) in centre_coords:
                                 centre_coord += np.array([15,0])
-                            ax.text(centre_coord[1], centre_coord[0], labl, fontdict={'color': 'blue'}, size = 15) 
-                            if legend:
-                                ax.legend()
+                            ax.text(centre_coord[1], centre_coord[0], labl, fontdict={'color': 'white'}, size = 17, weight='bold') 
                             centre_coords.append(list(centre_coord))
 
         #plt.savefig(scan_c, '{}_labelled_pairs_of_{}_{}'.format(self.scan, feature1, feature2))
@@ -545,8 +562,6 @@ class Si_Scan(object):
         angles = [angle1*180/np.pi, angle2*180/np.pi, angle3*180/np.pi]
         return angles
 
-
-
     def oneDhistogram(self, distances, edge, dr, density):
         nbins = edge//dr
         histogram = np.histogram(distances, bins = nbins)
@@ -586,6 +601,10 @@ class Detector(object):
         self.UNETbright = UNET1
         self.UNETdark = UNET2
         self.UNETstep = UNET3
+        self.denoise_fill_FFT = ae_fill_FFT
+        self.denoise_empty_FFT = ae_empty_FFT
+        self.denoise_fill_MSSSIM = ae_fill_MSSSIM
+        self.denoise_empty_MSSSIM = ae_empty_MSSSIM
 
         if legend != False:
             self.legend = legend
@@ -605,6 +624,8 @@ class Detector(object):
         array[0,0,:,:] = (array[0,0,:,:] - mean_f)#/torch.std(array[0,0,:,:])
         array[0,1,:,:] = (array[0,1,:,:] - mean_e)#/torch.std(array[0,1,:,:])
         return array
+    
+    def norm1_(self, array):
     
 
     def norm2(self, array):
@@ -626,14 +647,22 @@ class Detector(object):
         
     def norm3(self, array):
         '''
-        max/min normalisation for numpy arrays
+        Z-score normalisation of the the full array
         '''
-        max_f = np.expand_dims(np.max(array[:,:,:,0], axis=(1,2)), axis=(1,2))
-        min_f = np.expand_dims(np.min(array[:,:,:,0], axis=(1,2)), axis=(1,2))
-        max_e = np.expand_dims(np.max(array[:,:,:,1], axis=(1,2)), axis=(1,2))
-        min_e = np.expand_dims(np.min(array[:,:,:,1], axis=(1,2)), axis=(1,2))
-        array[:,:,:,0] = (array[:,:,:,0]-min_f)/(max_f-min_f)
-        array[:,:,:,1] = (array[:,:,:,1]-min_e)/(max_e-min_e)
+        mean = torch.mean(array)
+        std = torch.std(array)
+        array = (array - mean)/std
+        
+        return array
+    
+    def norm4(self, array):
+        '''
+        Min-max normalisation of the full array
+        '''
+        max = torch.max(array)
+        min = torch.min(array)
+        array = (array - min)/(max - min + 1e-8)  # Add epsilon to avoid division by zero
+        
         return array
 
     def make_output(self, output_b, output_dv, output_se, res):
@@ -664,16 +693,6 @@ class Detector(object):
         # order of output is background, bright, step edge, dv
         return output
 
-    '''
-    # takes in coordinates of certain features and produces a mask from these
-    def make_mask(self, labels, res, radius=3):
-        bright_mask = np.zeros((res,res))
-        Y, X = np.ogrid[:res, :res]    
-        for coord in labels:
-            dist_from_center = np.sqrt((X - coord[1])**2 + (Y-coord[0])**2)
-            bright_mask[dist_from_center <= radius] = 1
-        return bright_mask
-    '''
 
     def recentre(self, crop, scan, coordinate, min_border, max_border):
         '''
@@ -786,29 +805,17 @@ class Detector(object):
                 y, prediction, coord = self.label_feature(si_scan, scan_filled, scan_empty, coord, DVcoords)
                 coord = np.expand_dims(coord, axis=0) 
                 # update the corresponding mask for that feature
-                
                 if prediction == 1:
                     si_scan.mask_1DB += labels==i
                 elif prediction == 2:
                     si_scan.mask_2DB += labels==i
                 elif prediction == 3:
                     si_scan.mask_An += labels==i
-                elif prediction == 5:
+                elif prediction == 4:
                     si_scan.mask_As += labels==i
                 elif prediction == 8:
                     si_scan.mask_CDV += labels==i
 
-                
-                
-                ## TODO: NEED TO THINK ABOUT HOW TO DEAL WITH THIS. MAKE THE STEP EDGE DETECTOR MORE ROBUST? KEEP IT LIKE THIS THEN FILTER OUT THE SMALL STEPS AGAIN?
-                #elif prediction == 6:
-                #    si_scan.mask_step_edges[labels==i] = 1
-                #    plt.figure(figsize=(10,10))
-                #    plt.imshow(si_scan.mask_step_edges)
-                #    plt.show()
-
-                #if unsure:
-                #    self.unsure.append(coord)
        
     def label_feature(self, si_scan, scan_filled, scan_empty, coord, DVcoords):
         '''
@@ -838,7 +845,6 @@ class Detector(object):
         else:
             window = np.expand_dims(scan[y-self.crop_size:y+self.crop_size, x-self.crop_size:x+self.crop_size,:], axis=(0) ).copy()
         
-
         # training data was standardised so that each bright feature was centered on 
         # brightest pixel (separately for filled and empty states).
         # Must do the same for real data. We do so iteratively (recentre twice at most)
@@ -857,12 +863,6 @@ class Detector(object):
             
         coord =  coord_f.copy() - self.crop_size
 
-        #distances = np.sqrt(np.sum((coord-self.crop_size-DVcoords.T)**2, axis=1))
-        #if (distances>min_dist).all():
-        # if you want to not include the ones that are too close to DVs then uncomment the above lines 
-        # and the last three in this method
-
-
         window = np.transpose(window, (0,3,1,2))
         # normalise
         window = self.norm1(torch.tensor(window).float())
@@ -871,8 +871,8 @@ class Detector(object):
         #plt.imshow(window[0,0,:,:], cmap='afmhot')
         #plt.show()
         if si_scan.As:
-            # for ensemble model
             torch.manual_seed(0)
+            y = self.model_As(window)
             y = self.model_As(window)
         elif not si_scan.As:     
             torch.manual_seed(0)
@@ -894,7 +894,7 @@ class Detector(object):
             
         return y, prediction, coord-self.crop_size
 
-    def predict(self, si_scan, win_size=32):
+    def predict(self, si_scan, win_size=32, remove_noise=True):
         '''
         Outputs a fully segmented image of the scan.
 
@@ -902,6 +902,7 @@ class Detector(object):
             si_scan (Si_scan): Si_scan object to run prediction on
             As (bool): True if the scan is expected to contain As features.
             win_size (int): size of the crops that are fed into the UNets
+            remove_noise (bool): if True, removes noise from the scan after running Unets but before classifying features.
         Returns:
             output (npy): numpy array of shape (res,res,4) with the different features labelled
         '''
@@ -951,17 +952,13 @@ class Detector(object):
                     unet_prediction3[labels == i] = 0 
 
         si_scan.mask_step_edges = unet_prediction3
-                
 
-       # print('bright features')
-       # plt.imshow(cv2.dilate(si_scan.mask_bright_features.astype('uint8'), kernel, iterations=2))
-       # plt.show()
-       # print('dark features')
-       # plt.imshow(si_scan.mask_DV)
-       # plt.show()  
-       # print('step edges')
-       # plt.imshow(si_scan.mask_step_edges)
-       # plt.show()
+        if remove_noise:
+            self.remove_noise(si_scan) 
+        else:
+            # min/max normalise the scan
+            si_scan.scan[:,:,0] = (si_scan.scan[:,:,0]-np.min(si_scan.scan[:,:,0]))/(np.max(si_scan.scan[:,:,0])-np.min(si_scan.scan[:,:,0]))
+            si_scan.scan[:,:,1] = (si_scan.scan[:,:,1]-np.min(si_scan.scan[:,:,1]))/(np.max(si_scan.scan[:,:,1])-np.min(si_scan.scan[:,:,1]))
         
 
         # get coordinates for the bright spots and also their labels (they're just numbered from 1 upwards)
@@ -978,21 +975,7 @@ class Detector(object):
         else:
             output2 = np.stack((0.8*output[:,:,0], output[:,:,2], output[:,:,3], si_scan.mask_1DB, si_scan.mask_2DB, si_scan.mask_An, si_scan.mask_CDV), axis=2)
         # order of output2: background, step edges, dv, 1DB, 2DB, anomalies, CDV,  As features (if present)
-        
-        #print('1DB')
-        #plt.imshow(cv2.dilate(si_scan.mask_1DB.astype('uint8'),kernel,iterations=2))
-        #plt.show()
-        #print('2DB')
-        #plt.imshow(cv2.dilate(si_scan.mask_2DB.astype('uint8'),kernel,iterations=2))
-        #plt.show()
-        #print('anomalies')
-        #plt.imshow(cv2.dilate(si_scan.mask_An.astype('uint8'),kernel,iterations=2))
-        #plt.show()
-        #if As:
-        #    print('As features')
-        #    plt.imshow(cv2.dilate(si_scan.mask_As.astype('uint8'),kernel,iterations=2))
-        #    plt.show()
-        
+
         # create a dictionary that contains information about each feature in the scan
         # key = feature n: value = Feature instance. It includes feature type and pixel coordinate
         i = 0
@@ -1171,7 +1154,7 @@ class segmented_scan_stitcher(object):
             matches_list.append([m[0] for m in matches])
             #  First filter: round translations to nearest 'round_to' and only keep matches that have 
             # the same (rounded) translation to at least 'counts1' other matches
-            matches_arr, translations, most_common_trans = self.translation_filter(matches_list[-1], kp1, kp2, round_to, counts2)
+            matches_arr, translations, most_common_trans = self.translation_filter(matches_list[-1], kp1, kp2, round_to, counts1)
             matches_arrs.append(matches_arr)
             translations_list.append(translations)
             most_common_trans_list.append(most_common_trans)
@@ -1821,10 +1804,15 @@ class segmented_scan_stitcher(object):
                 graph[key[0]] = [key[1]]
             else:
                 graph[key[0]].append(key[1])
+        
+        # add the keys which have no paths to neigbouring scans
+        for key in seg_scans.keys():
+            if key not in graph:
+                graph[key] = []
 
         return homographies, graph, homographies_type, keypoints
 
-    def stitch_from_homographies(self, seg_scans, homographies, graph, stitch_for_n):
+    def stitch_from_homographies(self, seg_scans, homographies, graph, stitch_for_n, starter_scan_key=(0,0)):
         '''
         Stitches together the scans using the homography matrices and the graph showing which scans are connected.
         Args:
@@ -1832,10 +1820,13 @@ class segmented_scan_stitcher(object):
                                 The scans should be stm scan objects.
         homographies (dict): Dictionary of homography matrices with the keys being the tuple of the row and column number of the first scan and the second scan
         graph (dict): Dictionary of the graph showing which scans are connected with a valid
+        stitch_for_n (int): How many scans to stitch together.
+        starter_scan_key (tuple): The key of the scan to start stitching from. Default is (0,0).
+
         returns:
         stitched_scan (numpy.ndarray): The stitched scans
         '''    
-        starter_scan_key = (0,0)
+        
         added_scans = [starter_scan_key]
         translation = np.eye(3)
 
@@ -2447,6 +2438,74 @@ class scan_stitcher(object):
 
 
 if __name__ == "__main__":
+    img = 1
+    
+    if img ==1:
+        cwd = Path.cwd() # current working directory
+        path = cwd / 'examples' / '20181123-122007_STM_AtomManipulation-Earls Court-Si(100)-H term--26_1.Z_mtrx'
+        # make an STM object from NavigatingTheMatrix file
+        scan_dict = {'file': str(path), 
+                    'standard_pix_ratio': 1024/200
+                    }
+        scan = nvm.STM(scan_dict)
+        # clean up the scans
+        scan.clean_up(scan.trace_down, 'trace down', plane_level=True)
+        scan.clean_up(scan.retrace_down, 'retrace down', plane_level=True)
+        # correct hysteresis
+        scan.trace_down_proc, scan.retrace_down_proc, corrected, k = scan.correct_hysteresis(scan.trace_down_proc, scan.retrace_down_proc, 'trace down')
+        # make a Si_scan object just for trace down
+        trace_down = Si_Scan(scan, 'trace down', As=True)
+        # make detector object to find and label defects
+        detector = Detector()
+        # run prediction
+        trace_down.one_hot_segmented = detector.predict(trace_down)
+        # turn output into rgb image
+        trace_down.rgb = detector.turn_rgb(trace_down.one_hot_segmented)
+        ic(trace_down.feature_coords['As'])
+    # np.save('ec_features.npy', detector.windows)
+        # find distances between features
+    # trace_down.feature_dists()
+        # filter for distances and certain feature types
+        #trace_down.find_pairs('As', 'As', max_dist = 50, min_dist =0,angle=[(70,120)], display_image=True)
+        #trace_down.find_pairs('As', 'As', max_dist = 50, min_dist =0,angle=[(350,20)], display_image=True)
+        #trace_down.find_pairs('As', 'oneDB', max_dist = 15, min_dist = 10, angle=[(0,90)], display_image=True)
+        # show final segmentation
+        plt.imshow(trace_down.rgb)
+        plt.show()
+     
+    
+    elif img ==2:
+        cwd = Path.cwd() # current working directory
+        path = cwd / 'examples' / '20200212-183707_Hainault-Si(001)-H--54_1.Z_mtrx'
+        # make an STM object from NavigatingTheMatrix file
+        scan_dict = {'file': str(path), 
+                    'standard_pix_ratio': 1024/200
+                    }
+        scan = nvm.STM(scan_dict)
+        # clean up the scans
+        scan.clean_up(scan.trace_up, 'trace up', plane_level=True)
+        scan.clean_up(scan.retrace_up, 'retrace up', plane_level=True)
+        # correct hysteresis
+        scan.trace_up_proc, scan.retrace_up_proc, corrected, k = scan.correct_hysteresis(scan.trace_up_proc, scan.retrace_up_proc, 'trace up')
+        # make a Si_scan object just for trace down
+        trace_up = Si_Scan(scan, 'trace up', As=True)
+        # make detector object to find and label defects
+        detector = Detector()
+        # run prediction
+        trace_up.one_hot_segmented = detector.predict(trace_up)
+        # turn output into rgb image
+        trace_up.rgb = detector.turn_rgb(trace_up.one_hot_segmented)
+        ic(trace_up.feature_coords['As'])
+    # np.save('ec_features.npy', detector.windows)
+        # find distances between features
+    # trace_up.feature_dists()
+        # filter for distances and certain feature types
+        #trace_up.find_pairs('As', 'As', max_dist = 50, min_dist =0,angle=[(70,120)], display_image=True)
+        #trace_up.find_pairs('As', 'As', max_dist = 50, min_dist =0,angle=[(350,20)], display_image=True)
+        #trace_up.find_pairs('As', 'oneDB', max_dist = 15, min_dist = 10, angle=[(0,90)], display_image=True)
+        # show final segmentation
+        plt.imshow(trace_up.rgb)
+        plt.show()
     cwd = Path.cwd() # current working directory
     path = cwd / 'examples' / '20181123-122007_STM_AtomManipulation-Earls Court-Si(100)-H term--26_1.Z_mtrx'
     # make an STM object from NavigatingTheMatrix file
