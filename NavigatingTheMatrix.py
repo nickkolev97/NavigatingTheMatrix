@@ -23,7 +23,8 @@ class STM(object):
         data (dict): A dictionary of the traces and retraces.
         trace/retrace_up/down (np.array): The trace/retrace of the up/down scan.
         trace/retrace_up/down_proc (np.array): The processed trace/retrace of the up/down scan.
-        standard_pix_ratio (bool or float): The standard pixel ratio. False if you don't want the pixels to be downsampled, or the ratio if you do want it downsampled (num_pix/nm e.g. 512/100).
+        standard_pix_ratio (bool or float, or tuple of floats): The standard pixel ratio. False if you don't want the pixels to be downsampled, or the ratio if you do want it downsampled (num_pix/nm e.g. 512/100). If a tuple, the first element is the x ratio and the second element is the y ratio.
+                                            
     '''
     def __init__(self, scan_dict, from_file=True):
         """
@@ -48,6 +49,16 @@ class STM(object):
             
             if 'standard_pix_ratio' in scan_dict:
                 self.standard_pix_ratio = scan_dict['standard_pix_ratio'] 
+                
+                print('standard pix ratio: ' , self.standard_pix_ratio)
+                if type(self.standard_pix_ratio) == tuple:
+                    print('standard_pix_ratio is a tuple. The first element is the x ratio and the second element is the y ratio.')
+                    self.standard_pix_ratio_x = self.standard_pix_ratio[1]
+                    self.standard_pix_ratio_y = self.standard_pix_ratio[0]
+                else:
+                    self.standard_pix_ratio_x = self.standard_pix_ratio
+                    self.standard_pix_ratio_y = self.standard_pix_ratio
+
             # if false, we define it in _open_file as whatever it is in the scan
             
             # open the topography file using access to the matrix. It is returned as a dictionary of the traces and retraces
@@ -133,26 +144,37 @@ class STM(object):
 
             im, message = mtrx_data.select_image(traces[i])
             im.data = 1e9*im.data
-            if im.data.shape[0] != im.data.shape[1]:
-                scan_complete = False # scan was interupted before completion
+            if im.data.shape[0]/self.standard_pix_ratio_y != im.data.shape[1]/self.standard_pix_ratio_x:
+                scan_complete = False # assume scan was interupted before completion
             else: scan_complete = True
             
             width = int(im.width*1e9)
-            nm_to_pix_ratio = im.data.shape[0]/width
+            nm_to_pix_ratio_x = im.data.shape[1]/width
+            nm_to_pix_ratio_y = im.data.shape[0]/width
+
             
             if 'standard_pix_ratio' not in scan_dict:
-                self.standard_pix_ratio = nm_to_pix_ratio
+                self.standard_pix_ratio_x = nm_to_pix_ratio_x
+                self.standard_pix_ratio_y = nm_to_pix_ratio_y
             elif self.standard_pix_ratio:
-                if nm_to_pix_ratio != self.standard_pix_ratio:
-                    if nm_to_pix_ratio == 2*self.standard_pix_ratio:
-                        print('Pixel to nm ratio is twice as large as desired in', scan_, '. Pixels will be halved so that feature detection can be carried out on surface.')
-                        im.data = im.data[::2,::2]
-                    elif nm_to_pix_ratio == 4*self.standard_pix_ratio:
-                        print('Pixel to nm ratio is 4 times as large as desired in', scan_, '. Pixels will be quatered so that feature detection can be carried out on surface.')
-                        im.data = im.data[::4,::4]
+                if nm_to_pix_ratio_x != self.standard_pix_ratio_x:
+                    if nm_to_pix_ratio_x == 2*self.standard_pix_ratio:
+                        print('Pixel to nm ratio is twice as large as desired in', scan_, ', in x direction. Pixels will be halved so that feature detection can be carried out on surface.')
+                        im.data = im.data[:,::2]
+                    elif nm_to_pix_ratio_x == 4*self.standard_pix_ratio_x:
+                        print('Pixel to nm ratio is 4 times as large as desired in', scan_, ', in x direction. Pixels will be quatered so that feature detection can be carried out on surface.')
+                        im.data = im.data[:,::4]
                     else:
-                        print('Pixel to nm ratio is ' + str(im.data.shape[0]) + 'pixels for every ' + str(width) + 'nm in the ', scan_)
-            
+                        print('Pixel to nm ratio in x direction is ' + str(im.data.shape[0]) + 'pixels for every ' + str(width) + 'nm in the ', scan_)
+                if nm_to_pix_ratio_y != self.standard_pix_ratio_y:
+                    if nm_to_pix_ratio_y == 2*self.standard_pix_ratio_y:
+                        print('Pixel to nm ratio is twice as large as desired in', scan_, ', in y direction. Pixels will be halved so that feature detection can be carried out on surface.')
+                        im.data = im.data[::2,:]
+                    elif nm_to_pix_ratio_y == 4*self.standard_pix_ratio_y:
+                        print('Pixel to nm ratio is 4 times as large as desired in', scan_, ', in y direction. Pixels will be quatered so that feature detection can be carried out on surface.')
+                        im.data = im.data[::4,:]
+                    else:
+                        print('Pixel to nm ratio in y direction is ' + str(im.data.shape[0]) + 'pixels for every ' + str(width) + 'nm in the ', scan_)
             
             if message[:5]=='Error':
                 print(message) # Some of the traces weren't found. I don't make this an exception as this is expected sometimes
@@ -208,10 +230,11 @@ class STM(object):
             array_leveled (np.array): The plane levelled scan.
         '''
         
-        res = array.shape[0]
-        a = np.ogrid[0:res,0:res]
-        x_pts = np.tile(a[0],res).flatten()
-        y_pts = np.tile(a[1],res).flatten()
+        res_y = array.shape[0]
+        res_x = array.shape[1]
+        a = np.ogrid[0:res_y,0:res_x]
+        x_pts = np.tile(a[0],res_x).flatten()
+        y_pts = np.tile(a[1],res_y).flatten()
         z_pts = array.flatten()
         
         X_data = np.hstack( ( np.expand_dims(x_pts, axis=1) , np.expand_dims(y_pts,axis=1) ) )
@@ -223,35 +246,12 @@ class STM(object):
         # print("value of intercept, c2:", fit[2] )
               
         # make a grid to use for plane subtraction (using numpy's vectorisation)
-        x = np.linspace(0,res, num=res, endpoint = False, dtype=int)
-        y = np.linspace(0,res, num=res, endpoint = False, dtype=int)
+        x = np.linspace(0,res_x, num=res_x, endpoint = False, dtype=int)
+        y = np.linspace(0,res_y, num=res_y, endpoint = False, dtype=int)
         grid = np.meshgrid(x,y)
         
         # perform plane subtraction
         array_leveled = array - fit[2]*grid[0] - fit[1]*grid[1] - fit[0]
-      
-        '''
-        # this is code for doing a second degree surface subtraction. Stick with first order for now
-        # because the variance when using second order is larger (unsurprisingly, this is what we expect)
-        
-        x_ptsy_pts, x_ptsx_pts, y_ptsy_pts = x_pts*y_pts, x_pts*x_pts, y_pts*y_pts
-
-        X_data = np.array([x_pts, y_pts, x_ptsy_pts, x_ptsx_pts, y_ptsy_pts]).T  # X_data shape: n, 5
-        Y_data = z_pts
-
-        
-        reg = linear_model.LinearRegression().fit(X_data, Y_data)
-
-        print("coefficients of equation of plane, (a1, a2, a3, a4, a5): ", reg.coef_)
-
-        print("value of intercept, c:", reg.intercept_)
-        
-        array_leveled2 = array - reg.coef_[0]*grid[0] -  reg.coef_[1]*grid[1] - reg.coef_[2]*grid[0]*grid[1] - reg.coef_[3]*grid[0]*grid[0]- reg.coef_[3]*grid[1]*grid[1] - reg.intercept_
-        plt.imshow(array_leveled2)
-        plt.show()
-        
-        print(np.mean(array_leveled2), np.var(array_leveled2[labels==largest_area_label]) , np.mean(array_leveled), np.var(array_leveled[labels==largest_area_label]) )
-        '''
      
         return array_leveled
 
@@ -287,7 +287,9 @@ class STM(object):
         '''
 
         
-        res = trace.shape[0]
+        res_y = trace.shape[0]
+        res_x = trace.shape[1]
+
         # we need to use the OpenCV SIFT algorithm which needs the scan in a certain format
         bmap1 = cv2.normalize(trace, None, 0, 255, cv2.NORM_MINMAX).astype('uint8')
         bmap2 = cv2.normalize(retrace, None, 0, 255, cv2.NORM_MINMAX).astype('uint8')
@@ -312,8 +314,8 @@ class STM(object):
         # Now we have all the matches, we want to filter them. Not all of them are correct.
         # We filter by requiring that the y displacement is no more than a pixel and the 
         # x displacement is +/- 15pixels (if res=512). X is larger due to hysteresis
-        dy = 1/512 * res  # calculate dy and dx depending on the resolution
-        dx = 50/512 * res
+        dy = 1/512 * res_y  # calculate dy and dx depending on the resolution
+        dx = 50/512 * res_x
         match_coords = np.array([[kp2[m.trainIdx].pt[0], kp2[m.trainIdx].pt[1], kp1[m.queryIdx].pt[0], kp1[m.queryIdx].pt[1]] for m in matches])
         # find the matches that are within the dx and dy
         dx_of_matches = np.abs(match_coords[:,0] - match_coords[:,2])<dx  
@@ -340,7 +342,7 @@ class STM(object):
             p_t = coord1s[i][0]
             p_rt = coord2s[i][0]
             #print(p_t, p_rt)
-            k = (p_t-p_rt)/(np.sin(np.pi*p_t/(res))+np.sin(np.pi*p_rt/(res)))
+            k = (p_t-p_rt)/(np.sin(np.pi*p_t/(res_x))+np.sin(np.pi*p_rt/(res_x)))
             ks.append(k)
         k3 = np.mean(ks)
         #print('k3:', k3)
@@ -362,10 +364,10 @@ class STM(object):
             unproc_retrace = self.retrace_down.copy()
             unproc_retracec = self.retrace_down.copy() # this will be the corrected version
         
-        for i in range(res):
-            x_new = int(round(i - k3*np.sin(np.pi*i/res)/2,0))
-            if x_new < res:
-                for j in range(res):
+        for i in range(res_x):
+            x_new = int(round(i - k3*np.sin(np.pi*i/res_x)/2,0))
+            if x_new < res_x:
+                for j in range(res_x):
                     #print(i, x_new)
                     retracec[j,i] = retrace[j,x_new]
                     unproc_retracec[j,i] = unproc_retrace[j,x_new]
@@ -384,10 +386,10 @@ class STM(object):
             unproc_trace = self.trace_down.copy()
             unproc_tracec = self.trace_down.copy() # this will be the corrected version
         
-        for i in range(res):
-            x_new = int(round(i + k3*np.sin(np.pi*i/res)/2,0))
-            if x_new < res:
-                for j in range(res):
+        for i in range(res_x):
+            x_new = int(round(i + k3*np.sin(np.pi*i/res_x)/2,0))
+            if x_new < res_x:
+                for j in range(res_x):
                     #print(i, x_new)
                     tracec[j,i] = trace[j,x_new]
                     unproc_tracec[j,i] = unproc_trace[j,x_new]
@@ -564,3 +566,127 @@ def find_homography(img1, img2, threshold = 0.8, algorithm = 'SIFT', show_plot =
         plt.imshow(plot3, cmap='afmhot'), plt.title('Final matches'), plt.show()
     
     return H, mask
+
+##############################
+### Hysteresis correction of lithogrpaphy path
+##############################  
+def quadratic_func(x):
+    a = 3.7E-6
+    b = 0.0087
+    return a * x**2 + b * x 
+
+def correct_path(path, write_field_size):
+    '''
+    Corrects the inaccuracies in path due to hysteresis
+    args:
+    path: path in the form we need for mate script
+    write_field_size: the size of the write field in nm
+    returns:
+    new_path: the corrected path
+    xs: x-values of the raster extremes on each raster line
+
+    '''
+    # steps:
+    # 1. Find the width of each raster line. This will be used to calculate the k value for that line
+    # 2. Find the number of points in each raster line. This will be used to know when we are at the end of a raster line
+    # 3. Correct each point. Correction depends on whether we are in a fwd or bwd trace and raster width.
+
+    # find the number of points in each raster and the k values
+
+    num_points = [0] # number of points per raster, start with 0 
+    raster = 0 #  raster we are currently on
+    
+    # the x values of the raster extremes (needed to calculate the k value of hysteresis)
+    # these should come in pairs [start, end] so xs is list of lists
+    xs = [[path[0][0][0]]] 
+    old_point = path[0][0]
+    for subpath in path:
+        # subpath_array = np.array(subpath)
+        # split the subpath depending on number of different y values
+        for i, point in enumerate(subpath):
+            dy =  point[1] - old_point[1]
+            if np.allclose(point[1], old_point[1]): 
+                # we are still in same raster
+                num_points[raster] += 1
+            else:
+                # we are in a new raster
+                num_points.append(1)
+                raster += 1
+                xs[-1].append(old_point[0])
+                xs.append([point[0]])
+            old_point  = 1*point
+   
+    # add the last x value
+    xs[-1].append(path[-1][-1][0])
+    # we have the extremes of the rasters, now we need to calculate the k values
+    xs_array = np.array(xs)
+    raster_lengths = np.abs(xs_array[:,1] - xs_array[:,0])*write_field_size
+    
+    k_values = [quadratic_func(raster_length)/write_field_size for raster_length in raster_lengths]
+    # now we need to correct the path
+    new_path = []
+    raster = 0
+    npoint = 0
+
+    print('num_points: ', num_points)
+
+   # points = [point for point in subpath for subpath in path] # list for all points (no sublists)
+    for i, subpath in enumerate(path):
+        # find whether we start with a fwd or bwd trace
+        # and define the toggle
+        if subpath[0][0] < subpath[1][0]:
+            # we start with a fwd trace
+            toggle = -1
+        else:
+            # we start with a bwd trace
+            toggle = 1
+        new_subpath = []
+        for l, point in enumerate(subpath):
+            sin_arg = write_field_size*point[0]*np.pi/raster_lengths[raster]
+            correction = np.sum(k_values[raster]*np.sin(sin_arg))
+            new_subpath.append( [ point[0] + toggle*correction, point[1] ] )
+            npoint += 1
+
+            # check if we are at the end of a raster line
+            #print(npoint, num_points[raster])
+            if int(npoint) == int(num_points[raster]):
+                raster += 1
+                npoint = 0
+                toggle = -1*toggle
+            #print(toggle)
+
+
+        new_path.append(new_subpath)
+
+    return new_path, xs, raster
+         
+def plot_lithography_path(path, x_lim = None, y_lim = None):
+    '''
+    Plots a lithography path that is in the format needed for the MATE script 
+    i.e. a list of lists. Each sublist contains a list of points. 
+    In the plot, each sublist (subpath) is a different color (although matplotlib
+    only has so many colours so it may repeat colours).  
+
+    Args:
+        path (list): A list of subpaths, where each subpath is a list of points.
+        x_lim (tuple): Optional. The x-axis limits for the plot.
+        y_lim (tuple): Optional. The y-axis limits for the plot.
+    '''
+
+    for subpath in path:
+        # Convert the subpath to a numpy array
+        subpath = np.array(subpath)
+        
+        # Plot the subpath
+        plt.plot(subpath[:, 0], subpath[:, 1], linestyle='-')
+        
+    # Set the aspect ratio to be equal
+    plt.gca().set_aspect('equal', adjustable='box')
+    if x_lim is not None:
+        plt.xlim(x_lim)
+    if y_lim is not None:
+        plt.ylim(y_lim)
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    plt.title('Lithography Path')
+    plt.show()

@@ -311,7 +311,7 @@ class UNet(nn.Module):
 class Classifier(nn.Module):
     # classiifier network
 
-    def __init__(self, channels=2, crop_size=11, n_outputs=7, fc_layers=2, fc_nodes=100, dropout=0.2):
+    def __init__(self, channels=2, crop_size=11, n_outputs=7, fc_layers=2, fc_nodes=200, dropout=0.2):
         super().__init__()
         self.fc_layers = fc_layers
         
@@ -326,7 +326,7 @@ class Classifier(nn.Module):
             nn.Linear(in_features = (crop_size-4)**2 *64, out_features=fc_nodes),
             nn.Dropout(dropout),
             nn.ReLU(),
-            nn.BatchNorm1d(100),
+            nn.BatchNorm1d(fc_nodes),
         )
         
         self.linear_relu_stack = nn.Sequential(
