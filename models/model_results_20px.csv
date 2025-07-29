@@ -1,0 +1,991 @@
+fc_layers,fc_nodes,dropout,loss,model,confusion_matrix,precision,recall,accuracy,macro_precision,macro_recall,micro_precision,micro_recall
+2,128,0.2,cross_entropy,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=128, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=128, out_features=128, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=128, out_features=4, bias=True)
+  )
+)","[[256   6  18   0]
+ [  0 110  42   0]
+ [ 22  16 234  24]
+ [ 10  11 120 427]]",[0.88888889 0.76923077 0.56521739 0.94678492],[0.91428571 0.72368421 0.79054054 0.75176056],0.7924382716049383,0.792530492954671,0.7950677571832132,0.7924382716049383,0.7924382716049383
+3,256,0.2,cross_entropy,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=256, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=256, out_features=256, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=256, out_features=4, bias=True)
+  )
+)","[[279   0   1   0]
+ [  1  99  52   0]
+ [ 48   0 180  68]
+ [  9   3 109 447]]",[0.82789318 0.97058824 0.52631579 0.86796117],[0.99642857 0.65131579 0.60810811 0.78697183],0.7754629629629629,0.7981895912226324,0.7607060749990698,0.7754629629629629,0.7754629629629629
+2,64,0.2,cross_entropy,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=64, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=64, out_features=64, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=64, out_features=4, bias=True)
+  )
+)","[[253   3  24   0]
+ [  8  94  50   0]
+ [ 86  24 169  17]
+ [ 19  15  60 474]]",[0.69125683 0.69117647 0.55775578 0.96537678],[0.90357143 0.61842105 0.57094595 0.83450704],0.7638888888888888,0.7263914647110697,0.7318613673506187,0.7638888888888888,0.7638888888888888
+3,64,0.2,cross_entropy,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=64, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=64, out_features=64, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=64, out_features=4, bias=True)
+  )
+)","[[261   5  14   0]
+ [  0 132  20   0]
+ [ 97  37 159   3]
+ [ 16   4 130 418]]",[0.69786096 0.74157303 0.49226006 0.99287411],[0.93214286 0.86842105 0.53716216 0.73591549],0.7484567901234568,0.7311420418644681,0.7684103912235862,0.7484567901234568,0.7484567901234568
+1,128,0.2,focal_loss,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=128, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=128, out_features=128, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=128, out_features=4, bias=True)
+  )
+)","[[226   3  30  21]
+ [  8 107  37   0]
+ [ 60   6 213  17]
+ [  8   3 146 411]]",[0.74834437 0.89915966 0.5        0.91536748],[0.80714286 0.70394737 0.71959459 0.72359155],0.7384259259259259,0.7657178795056718,0.7385690923635697,0.7384259259259259,0.7384259259259259
+1,64,0.2,cross_entropy,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=64, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=64, out_features=64, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=64, out_features=4, bias=True)
+  )
+)","[[277   0   3   0]
+ [ 16  65  71   0]
+ [ 88   0 106 102]
+ [ 19   0  40 509]]",[0.6925     1.         0.48181818 0.83306056],[0.98928571 0.42763158 0.35810811 0.89612676],0.7384259259259259,0.7518446845707484,0.6677880404761427,0.7384259259259259,0.7384259259259259
+2,256,0.2,cross_entropy,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=256, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=256, out_features=256, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=256, out_features=4, bias=True)
+  )
+)","[[261   9   7   3]
+ [  8 140   4   0]
+ [ 88  37  46 125]
+ [ 13  22  27 506]]",[0.70540541 0.67307692 0.54761905 0.79810726],[0.93214286 0.92105263 0.15540541 0.89084507],0.7353395061728395,0.6810521579054702,0.7248614911374363,0.7353395061728395,0.7353395061728395
+1,256,0.2,cross_entropy,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=256, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=256, out_features=256, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=256, out_features=4, bias=True)
+  )
+)","[[249   0   5  26]
+ [ 14  77  60   1]
+ [ 47   3 115 131]
+ [  9   2  55 502]]",[0.78056426 0.93902439 0.4893617  0.76060606],[0.88928571 0.50657895 0.38851351 0.88380282],0.7276234567901234,0.7423891040751267,0.6670452480172643,0.7276234567901234,0.7276234567901234
+2,512,0.2,cross_entropy,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=512, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=512, out_features=512, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=512, out_features=4, bias=True)
+  )
+)","[[251   4  23   2]
+ [  9 136   6   1]
+ [127  62  53  54]
+ [ 16  21  31 500]]",[0.62282878 0.60986547 0.46902655 0.89766607],[0.89642857 0.89473684 0.17905405 0.88028169],0.7253086419753086,0.6498467179665781,0.7126252894321834,0.7253086419753086,0.7253086419753086
+3,256,0.2,focal_loss,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=256, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=256, out_features=256, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=256, out_features=4, bias=True)
+  )
+)","[[257   0  23   0]
+ [  6 114  32   0]
+ [ 82   7 205   2]
+ [ 17   7 187 357]]",[0.70994475 0.890625   0.45861298 0.99442897],[0.91785714 0.75       0.69256757 0.62852113],0.7199074074074074,0.7634029240330115,0.7472364592963184,0.7199074074074074,0.7199074074074074
+1,128,0.2,cross_entropy,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=128, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=128, out_features=128, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=128, out_features=4, bias=True)
+  )
+)","[[203   0  74   3]
+ [  8 104  40   0]
+ [ 35   4 196  61]
+ [  9   1 130 428]]",[0.79607843 0.95412844 0.44545455 0.8699187 ],[0.725      0.68421053 0.66216216 0.75352113],0.7183641975308642,0.7663950290952646,0.7062234538096288,0.7183641975308642,0.7183641975308642
+1,64,0.2,focal_loss,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=64, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=64, out_features=64, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=64, out_features=4, bias=True)
+  )
+)","[[272   2   6   0]
+ [ 14  71  67   0]
+ [ 98   3 191   4]
+ [ 20   0 166 382]]",[0.67326733 0.93421053 0.44418605 0.98963731],[0.97142857 0.46710526 0.64527027 0.67253521],0.7067901234567902,0.7603253013148932,0.6890848290310855,0.7067901234567902,0.7067901234567902
+3,128,0.2,cross_entropy,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=128, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=128, out_features=128, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=128, out_features=4, bias=True)
+  )
+)","[[ 76   0  89 115]
+ [  8 101  43   0]
+ [ 17   2 227  50]
+ [  1   0  91 476]]",[0.74509804 0.98058252 0.50444444 0.7425897 ],[0.27142857 0.66447368 0.76689189 0.83802817],0.6790123456790124,0.7431786778800297,0.6352055791362685,0.6790123456790124,0.6790123456790124
+3,1024,0.2,cross_entropy,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=1024, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=1024, out_features=1024, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=1024, out_features=4, bias=True)
+  )
+)","[[ 67   0 210   3]
+ [  0  89  63   0]
+ [  0   9 268  19]
+ [  0   7 127 434]]",[1.         0.84761905 0.4011976  0.95175439],[0.23928571 0.58552632 0.90540541 0.76408451],0.6620370370370371,0.8001427595935948,0.6235754856307117,0.6620370370370371,0.6620370370370371
+3,512,0.2,focal_loss,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=512, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=512, out_features=512, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=512, out_features=4, bias=True)
+  )
+)","[[236   0  44   0]
+ [  0  83  69   0]
+ [ 71   1 224   0]
+ [ 15   2 240 311]]",[0.73291925 0.96511628 0.3882149  1.        ],[0.84285714 0.54605263 0.75675676 0.54753521],0.6589506172839507,0.7715626096018822,0.6733004356151132,0.6589506172839507,0.6589506172839507
+2,256,0.2,focal_loss,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=256, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=256, out_features=256, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=256, out_features=4, bias=True)
+  )
+)","[[231   0  36  13]
+ [  8  65  79   0]
+ [ 66   1 208  21]
+ [  8   0 215 345]]",[0.73801917 0.98484848 0.3866171  0.91029024],[0.825      0.42763158 0.7027027  0.60739437],0.6550925925925926,0.7549437480040809,0.6406821619618135,0.6550925925925926,0.6550925925925926
+1,512,0.2,cross_entropy,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=512, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=512, out_features=512, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=512, out_features=4, bias=True)
+  )
+)","[[257   0  23   0]
+ [  8  36 108   0]
+ [ 82   0 201  13]
+ [ 18   0 199 351]]",[0.70410959 1.         0.37853107 0.96428571],[0.91785714 0.23684211 0.67905405 0.61795775],0.6520061728395061,0.7617315941932845,0.6129277621633069,0.6520061728395061,0.6520061728395061
+2,128,0.2,focal_loss,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=128, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=128, out_features=128, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=128, out_features=4, bias=True)
+  )
+)","[[177   0  91  12]
+ [  6 101  45   0]
+ [  2   0 276  18]
+ [  8  17 258 285]]",[0.91709845 0.8559322  0.4119403  0.9047619 ],[0.63214286 0.66447368 0.93243243 0.50176056],0.6473765432098766,0.7724332130637632,0.6827023842915245,0.6473765432098766,0.6473765432098766
+2,1024,0.2,cross_entropy,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=1024, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=1024, out_features=1024, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=1024, out_features=4, bias=True)
+  )
+)","[[117   0 163   0]
+ [  0  92  60   0]
+ [ 36  48 133  79]
+ [ 14  25  51 478]]",[0.7005988  0.55757576 0.32678133 0.85816876],[0.41785714 0.60526316 0.44932432 0.8415493 ],0.6327160493827161,0.61078116199328,0.578498480212713,0.6327160493827161,0.6327160493827161
+1,1024,0.2,cross_entropy,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=1024, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=1024, out_features=1024, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=1024, out_features=4, bias=True)
+  )
+)","[[264   0  16   0]
+ [ 15 111  26   0]
+ [143  17 136   0]
+ [ 26  10 239 293]]",[0.58928571 0.80434783 0.32613909 1.        ],[0.94285714 0.73026316 0.45945946 0.51584507],0.6203703703703703,0.679943157275422,0.6621062076584687,0.6203703703703703,0.6203703703703703
+1,512,0.2,focal_loss,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=512, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=512, out_features=512, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=512, out_features=4, bias=True)
+  )
+)","[[150   6 124   0]
+ [  0 124  28   0]
+ [ 33  14 247   2]
+ [  8   1 287 272]]",[0.78534031 0.85517241 0.36005831 0.99270073],[0.53571429 0.81578947 0.83445946 0.47887324],0.6118827160493827,0.7483179417235344,0.6662091145736438,0.6118827160493827,0.6118827160493827
+3,512,0.2,cross_entropy,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=512, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=512, out_features=512, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=512, out_features=4, bias=True)
+  )
+)","[[232  35  13   0]
+ [  0 150   2   0]
+ [ 64  54 153  25]
+ [  9  30 275 254]]",[0.76065574 0.55762082 0.34537246 0.91039427],[0.82857143 0.98684211 0.51689189 0.4471831 ],0.6087962962962963,0.6435108203195933,0.694872131079507,0.6087962962962963,0.6087962962962963
+2,64,0.2,focal_loss,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=64, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=64, out_features=64, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=64, out_features=4, bias=True)
+  )
+)","[[278   0   2   0]
+ [  3  91  58   0]
+ [152   1 143   0]
+ [ 43   0 252 273]]",[0.58403361 0.98913043 0.31428571 1.        ],[0.99285714 0.59868421 0.48310811 0.4806338 ],0.6057098765432098,0.7218624406284253,0.638820816077117,0.6057098765432098,0.6057098765432098
+3,64,0.2,focal_loss,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=64, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=64, out_features=64, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=64, out_features=4, bias=True)
+  )
+)","[[217   0  42  21]
+ [  8  68  76   0]
+ [ 57  12 224   3]
+ [ 21  14 259 274]]",[0.71617162 0.72340426 0.37271215 0.91946309],[0.775      0.44736842 0.75675676 0.48239437],0.6041666666666666,0.6829377765379541,0.6153798860016428,0.6041666666666666,0.6041666666666666
+1,1024,0.2,focal_loss,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=1024, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=1024, out_features=1024, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=1024, out_features=4, bias=True)
+  )
+)","[[257   1  22   0]
+ [  8  79  65   0]
+ [ 56   1 236   3]
+ [ 12   1 444 111]]",[0.77177177 0.96341463 0.30769231 0.97368421],[0.91785714 0.51973684 0.7972973  0.19542254],0.5270061728395061,0.7541407310341842,0.6075784543677427,0.5270061728395061,0.5270061728395061
+2,512,0.2,focal_loss,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=512, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=512, out_features=512, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=512, out_features=4, bias=True)
+  )
+)","[[181   7  92   0]
+ [  0 148   4   0]
+ [ 23  22 249   2]
+ [  8   9 446 105]]",[0.85377358 0.79569892 0.3147914  0.98130841],[0.64642857 0.97368421 0.84121622 0.18485915],0.5270061728395061,0.7363930810346937,0.6615470382751703,0.5270061728395061,0.5270061728395061
+1,256,0.2,focal_loss,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=256, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=256, out_features=256, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=256, out_features=4, bias=True)
+  )
+)","[[ 51   0 229   0]
+ [  8  71  73   0]
+ [  3   8 278   7]
+ [  7   7 280 274]]",[0.73913043 0.8255814  0.32325581 0.97508897],[0.18214286 0.46710526 0.93918919 0.48239437],0.5200617283950617,0.7157641530141161,0.517707918921781,0.5200617283950617,0.5200617283950617
+3,1024,0.2,focal_loss,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=1024, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=1024, out_features=1024, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=1024, out_features=4, bias=True)
+  )
+)","[[233   0  47   0]
+ [  0 116  36   0]
+ [ 46  15 235   0]
+ [ 11  26 506  25]]",[0.80344828 0.7388535  0.28519417 1.        ],[0.83214286 0.76315789 0.79391892 0.04401408],0.4699074074074074,0.706873988451016,0.608308438826415,0.4699074074074074,0.4699074074074074
+3,128,0.2,focal_loss,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=128, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=128, out_features=128, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=128, out_features=4, bias=True)
+  )
+)","[[255   0  25   0]
+ [  9 125  18   0]
+ [104  15 177   0]
+ [ 22  10 512  24]]",[0.65384615 0.83333333 0.24180328 1.        ],[0.91071429 0.82236842 0.59797297 0.04225352],0.44830246913580246,0.682245691467003,0.5933273002166627,0.44830246913580246,0.44830246913580246
+2,1024,0.2,focal_loss,"NeuralNetwork(
+  (convolutional_relu_stack): Sequential(
+    (0): Conv2d(2, 32, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): ReLU()
+    (3): Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (5): ReLU()
+    (6): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (7): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (8): ReLU()
+    (9): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=valid)
+    (10): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (11): ReLU()
+    (12): Flatten(start_dim=1, end_dim=-1)
+    (13): Linear(in_features=36864, out_features=1024, bias=True)
+    (14): Dropout(p=0.2, inplace=False)
+    (15): ReLU()
+    (16): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack): Sequential(
+    (0): Linear(in_features=1024, out_features=1024, bias=True)
+    (1): Dropout(p=0.2, inplace=False)
+    (2): ReLU()
+    (3): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (linear_relu_stack_last): Sequential(
+    (0): Linear(in_features=1024, out_features=4, bias=True)
+  )
+)","[[ 49  80 151   0]
+ [  0  78  74   0]
+ [ 24  69 177  26]
+ [  2  23 297 246]]",[0.65333333 0.312      0.25321888 0.90441176],[0.175      0.51315789 0.59797297 0.43309859],0.4243827160493827,0.5307409955398469,0.4298073648147777,0.4243827160493827,0.4243827160493827

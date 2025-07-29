@@ -30,8 +30,13 @@ UNET1 = mo.UNet_m() # bright features
 UNET2 = mo.UNet() # dark features/dimer vacancies
 UNET3 = mo.UNet() # step edges
 # classifiers
-model4 = mo.Classifier(channels=2, crop_size=11, n_outputs=4, fc_layers=2, fc_nodes=100, dropout=0.2) # no Arsine
-model5 = mo.Classifier(channels=2, crop_size=11, n_outputs=5, fc_layers=2, fc_nodes=100, dropout=0.2) # Arsine present
+model4 = mo.Classifier(channels=2, crop_size=12, n_outputs=3, fc_layers=2, fc_nodes=512, dropout=0.2) # no Arsine
+model5 = mo.Classifier(channels=2, crop_size=20, n_outputs=4, fc_layers=1, fc_nodes=100, dropout=0.2) # Arsine present
+# denoisers
+ae_fill_FFT = mo.Autoencoder(3)
+ae_empty_FFT = mo.Autoencoder(3)
+ae_fill_MSSSIM = mo.Autoencoder(3)
+ae_empty_MSSSIM = mo.Autoencoder(3)
 
 # load models
 this_dir = Path(__file__).resolve().parent
@@ -40,8 +45,8 @@ UNet1 = load_model(UNET1, Path.joinpath(this_dir, 'models', 'UNet_bright.pth') )
 UNet2 = load_model(UNET2, Path.joinpath(this_dir, 'models', 'UNet_DV_new_(scanlines_dark+creep)2.pth') ) # UNET finding dark features/dimer vacancies
 UNet3 = load_model(UNET3, Path.joinpath(this_dir, 'models', 'UNet_steps_new_.pth') ) # UNET finding step edges
 
-model4 = load_model(model4, Path.joinpath(this_dir, 'models', 'Si(001)-H_classifier.pth') ) # 98% train acc, 91%test acc (1DB, 2DB, an)
-model5 = load_model(model5, Path.joinpath(this_dir, 'models', 'model_fc2_nodes200_drop0.2.pth') ) # 92% train acc, 86%test acc (1DB, 2DB, an, As)
+model4 = load_model(model4, Path.joinpath(this_dir, 'models', 'model_fc2_nodes512_drop0.2_CEloss_DB.pth') ) # 98% train acc, 91%test acc (1DB, 2DB, an)
+model5 = load_model(model5, Path.joinpath(this_dir, 'models', 'model_fc1_nodes100_drop0.2.pth') ) # 92% train acc, 86%test acc (1DB, 2DB, an, As)
 #model5 = load_model(model5, Path.joinpath(this_dir, 'models', 'model_fc2_nodes200_drop0.2.pth') ) # 92% train acc, 86%test acc (1DB, 2DB, an, As)
 
 ae_fill_FFT = load_model(ae_fill_FFT, Path.joinpath(this_dir, 'models', 'ae_fill_FFT_13_01_25.pth') ) # denoiser for filled scans
@@ -131,8 +136,8 @@ class Si_Scan(object):
     
         self.trace = trace
         self.yres, self.xres = self.scan.shape[:2]
-        self.width = STMScan.width 
-        self.height = STMScan.height
+        self.width = STMScan.width # this is in nm
+        self.height = STMScan.height # in nm
 
         self.mask_step_edges = None
         self.mask_DV = None
@@ -212,18 +217,42 @@ class Si_Scan(object):
             feature1_type and feature2_type: the types of feature. One of 'oneDB', 'twoDB', 'anomalies', 'As'
             exclusion_defects(list): List of features to keep outside of exclusions dist of the pair.
                                         Should be a subset of ['oneDB', 'twoDB', 'anomalies', 'As']
-            exclusion_dist: If False, does not exclude any pairs of features that have some other feature
-                            near them. If a number, then it will exclude pairs of features that have some other features
-                            of type exclusion_defects within the exclusion distance of them. (nm)
+            exclusion_dist: if True, then it will exclude pairs of features that have other feature of either 
+                            feature1_type or feature2_type within the exclusion_dist of them. (nm)
             display_image: if True, then it will display the image of the feature pairs labelled
+            angle (tuple): A tuple of numbers defining the (inclusive) range of allowed angles between the features and the dimer rows.
+                          e.g. (0,10) will allow angles between 0 and 10 degrees and 30 and 45 degrees.
+                          If None, then all angles are allowed. First number should be smaller than second.
+                          Angles are all between 0 and 45 degrees, as we find the angle between the vector connecting the two
+                          features, and the closest dier row direction (which could be on a different terrace).
         
         Returns:
             Dictionary with number of feature pair as key and feature pair as value (where a feature is a feature
             object from this .py doc).
           
         '''
+
+        # check object type of inputs
+        if feature1_type not in ['oneDB', 'twoDB', 'anomalies', 'As'] or feature2_type not in ['oneDB', 'twoDB', 'anomalies', 'As']:
+            raise ValueError('feature1_type must be one of "oneDB", "twoDB", "anomalies", "As"')
+        if feature2_type not in ['oneDB', 'twoDB', 'anomalies', 'As'] or feature2_type not in ['oneDB', 'twoDB', 'anomalies', 'As']:
+            raise ValueError('feature2_type must be one of "oneDB", "twoDB", "anomalies", "As"')
+        if exclusion_defects:
+            for defect in exclusion_defects:
+                if defect not in ['oneDB', 'twoDB', 'anomalies', 'As']:
+                    raise ValueError('exclusion_defects must be a subset of ["oneDB", "twoDB", "anomalies", "As"]')
+        if angle is not None:
+            if not isinstance(angle, tuple):
+                raise ValueError('angle must be a tuple of numbers')
+            if len(angle)!=2:
+                raise ValueError('angle must be a list of tuples of numbers')
+            if not isinstance(angle[0], (int, float)) or not isinstance(angle[1], (int, float)):
+                raise ValueError('angle must be a list of tuples of numbers')
+            if angle[0] > angle[1]:
+                raise ValueError('angle must be a list of tuples of numbers where the first number is less than the second number')
+
         feature_pairs_dict = {}
-        
+
         pairs_set = set() # set of pairs (used to avoid double counting)
 
         # find all features of feature1_type that have only one feature2 type within the max_dist
@@ -265,7 +294,31 @@ class Si_Scan(object):
                     new_feature_pairs_dict[pair] = [feature1, feature2]
             feature_pairs_dict = new_feature_pairs_dict
 
-        #ic(feature_pairs_dict)
+        # find the angle between the pairs and the dimers.
+        # We assume there is no skew in the image (so the dimer rows are at 90 degrees to each other)
+        for pair in feature_pairs_dict.keys():
+            feature1 = feature_pairs_dict[pair][0].coord
+            feature2 = feature_pairs_dict[pair][1].coord
+            vector12 = self._find_vector(feature1, feature2) # gets vector between the two features
+            angle_with_dimers = self._find_angle_with_dimers(vector12)
+            # save the angle in the feature object
+            feature_pairs_dict[pair][0].angles[feature_pairs_dict[pair][1]] = angle_with_dimers
+            feature_pairs_dict[pair][1].angles[feature_pairs_dict[pair][0]] = angle_with_dimers
+
+        # filter for angles
+        if angle is not None:
+            new_feature_pairs_dict = {}
+            for pair in feature_pairs_dict.keys():
+                feature1 = feature_pairs_dict[pair][0]
+                feature2 = feature_pairs_dict[pair][1]
+                dimer_angle = feature1.angles[feature2]
+                
+                # check if the angle is within the range
+                if dimer_angle<=angle[1] and dimer_angle>=angle[0]:
+                    new_feature_pairs_dict[pair] = [feature1, feature2]
+                    
+        feature_pairs_dict = new_feature_pairs_dict
+        print(angle)
         if display_image:
             self.annotate_scan(feature_pairs_dict, [feature1_type, feature2_type], max_dist, min_dist, exclusion_dist=exclusion_dist, exclusion_defects=exclusion_defects,angle=angle)
 
@@ -421,7 +474,11 @@ class Si_Scan(object):
             min_dist: the minimum wanted distance between two features (in nm)
             fig_size: size of figure to be displaye
             legend: if true, include legend (sometimes want it without legend as it's too packed)
-
+            exclusion_dist: if True, then it will exclude pairs of features that have some other feature
+                            within the exclusion distance of them. (nm)
+            angle: A list of tuples of numbers defining the range of allowed angles between the features and the dimer rows.
+                          e.g. (0,10) will allow angles between.
+                  If none, angles don't matter.
         Returns:
             Nothing
         """
@@ -432,7 +489,7 @@ class Si_Scan(object):
         # plot all ntuplets on same image
         fig, ax = plt.subplots(figsize=fig_size)
         plt.imshow(scan_c[:,:,0], cmap='afmhot')
-        
+    
         # keep a list of all centre_coords (in big plots) so we know if any repeat
         centre_coords = []
 
@@ -451,8 +508,9 @@ class Si_Scan(object):
                                 labl = f'{i}'
                             else:
                                 labl = f'{i}.{m}'
-
-                            ax.plot([x1,x2], [y1,y2], color="white", linewidth=1, label = f'{labl}: {round(feature1.distances[feature2],1)}nm')                
+                            distance = round(feature1.distances[feature2],1)
+                            features_angle = round(feature1.angles[feature2], 1)
+                            ax.plot([x1,x2], [y1,y2], color="white", linewidth=1, label = f'{labl}: {distance}nm, {features_angle} degrees')                
                             # Draw the text halfway between the two features
                             centre_coord = (np.array([y1,x1]) + np.array([y2,x2]))/2
                             while list(centre_coord) in centre_coords:
@@ -460,17 +518,25 @@ class Si_Scan(object):
                             ax.text(centre_coord[1], centre_coord[0], labl, fontdict={'color': 'white'}, size = 17, weight='bold') 
                             centre_coords.append(list(centre_coord))
 
+        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+
         #plt.savefig(scan_c, '{}_labelled_pairs_of_{}_{}'.format(self.scan, feature1, feature2))
-        if exclusion_dist == False:
+        if exclusion_dist == False and angle is None:
             plt.title('{} features with separation between {}nm and {}nm'.format(features, min_dist, max_dist))
             plt.show()
-        else:
+        elif exclusion_dist and angle is None:
             plt.title('{} features with separation between {}nm and {}nm and no features of type {} within {}nm'.format(features, min_dist, max_dist, exclusion_defects, exclusion_dist))
+            plt.show()
+        elif exclusion_dist == False and angle is not None:
+            plt.title('{} features with separation between {}nm and {}nm and angles between {} and {}'.format(features, min_dist, max_dist, angle[0], angle[1]))
+            plt.show()
+        else:
+            plt.title('{} features with separation between {}nm and {}nm, angles between {} and {} degrees, and no features of type {} within {}nm'.format(features, min_dist, max_dist, angle[0], angle[1], exclusion_defects, exclusion_dist))
             plt.show()
 
         # now plot all ntuplets on separate images but smaller
         # if we have more than one ntuplet
-
+        '''
         if len(dict_ntuplets)>1: 
             # determine the number of subplots needed.
             # First, decide number of columns. Either 2 or 3 columns
@@ -526,6 +592,7 @@ class Si_Scan(object):
             #plt.savefig(scan_c, '{}_labelled_pairs_of_{}_{}'.format(self.scan, feature1, feature2))
             fig2.suptitle('{} features with separation between {}nm and {}nm'.format(features, min_dist, max_dist))
             plt.show()
+            '''
 
         return
 
@@ -573,6 +640,127 @@ class Si_Scan(object):
             histogram[0][j] = histogram/normalisation
 
         return histogram
+    
+    def _get_dimer_angle(self):
+        ''' 
+        Get angle of dimers using FFT.
+        '''
+        img = self.scan[:,:,0].copy()
+        # Apply Hann window to the image
+        window = np.outer(np.hanning(img.shape[0]), np.hanning(img.shape[1]))
+        img_windowed = img * window
+
+        # Compute the FFT
+        img_fft = np.fft.fftshift(np.fft.fft2(img_windowed))
+        img_fft_magnitude = np.log(np.abs(img_fft) + 1)  # Log scale for better visualization
+
+        # Create a high-pass filter
+        rows, cols = img.shape
+        crow, ccol = rows // 2, cols // 2
+        mask = np.ones((rows, cols), dtype=np.float32)
+        radius = 30  # Filter radius
+        y, x = np.ogrid[:rows, :cols]
+        mask_area = (y - crow) ** 2 + (x - ccol) ** 2 <= radius ** 2
+        mask[mask_area] = 0  # Block low frequencies
+
+        # Apply high-pass filter
+        img_fft_hp = img_fft * mask
+        img_fft_hp_magnitude = np.log(np.abs(img_fft_hp) + 1)
+
+        # Find the maximum in the filtered FFT
+        max_value = np.max(np.abs(img_fft_hp))
+        max_indices = np.unravel_index(np.argmax(np.abs(img_fft_hp)), img_fft_hp.shape)
+
+        # if the sign of dx and dy is the same, the angle is in the second or fourth quadrant
+        # if the sign of dx and dy is different, the angle is in the first or third quadrant
+
+        dx = max_indices[1]-ccol
+        dy = max_indices[0]-crow
+        # now get the angle of the maximum value
+        # -dy as matplotlib coordinate system has y decreasing upwards (so a right handed coordinate system)
+        angle = np.rad2deg(np.arctan(-dy/dx))
+    
+      #  if dx*dy<0:
+      #      angle = angle
+      #  else:
+      #      angle = 180-angle
+        print(f'Angle of dimers: {angle} degrees')
+        return angle
+
+    def _sign(self, x):
+        return 1 if x >= 0 else -1
+    
+    def _find_vector(self,coord1,coord2):
+        '''
+        Finds angle between 2 coordinates on scan (usually 2 features) and the x-axis.
+        '''
+        y1, x1 = coord1
+        y2, x2 = coord2
+        dx = x1-x2
+        dy = y1-y2
+        
+
+        return np.array([dy, dx]) # dy first as it's numpy convention
+         
+    def _find_angle_with_dimers(self,v):
+        '''
+        Finds angle between vector and the dimer rows.
+        Args:
+            v: a numpy array of the form [dy, dx] where dy is the change in y and dx is the change in x
+        Returns:
+            angle: the angle between the vector and the dimer rows in degrees
+        '''
+        # get angle of the vector w.r.t x-axis
+        angle = abs(np.arctan(-v[0]/v[1])) # -v[0] as matplotlib coordinate system has y decreasing upwards (so a right handed coordinate system)
+        # convert to degrees        
+        angle = np.rad2deg(angle)
+        # find difference in angles
+        angle_with_dimers = abs(self.dimer_angle - angle) 
+
+        return angle_with_dimers       
+    
+    def ExpectedAsDistances(self, N=100, oneDBs = None, twoDBs = None, width = None):
+        '''
+        Uses the prediction of the number of 2DBs and 1DBs from the ML, the probability of AsH3 adsorbing to the DBs, and a simple monte carlo simulation to predict the expected value of the average distance between dopants, minimum, and maximum.
+        args:
+            N (int): Number of times to run monte carlo
+            oneDBs (int): Number of 1DBs. If none given, taken from scans attributes
+            twoDBs (int): Number of 1DBs. If none given, taken from scans attributes
+            width (int): Width of scan in nm. If none given, taken from scans attributes
+        '''
+        if oneDBs is None:
+            oneDBs = len(self.feature_coords['oneDB'])
+        if twoDBs is None:
+            twoDBs = len(self.feature_coords['twoDB'])
+        if width is None:
+            width = self.width
+
+        n = int((0.1*oneDBs)+(0.75*twoDBs))
+        avg_dists = []
+        min_dists = []
+        max_dists = []
+        # run monte carlo for N loops
+        for i in range(N):
+            # pick n random coordinates inside a unit square
+            x_coords = np.random.uniform(0,1,(n))
+            y_coords = np.random.uniform(0,1,(n))
+            x_coords = (np.tile(x_coords,(n,1)))
+            y_coords = (np.tile(y_coords,(n,1)))
+            x_dist = (x_coords-x_coords.T)**2
+            y_dist = (y_coords - y_coords.T)**2
+            dists = np.sqrt(x_dist+y_dist)
+            # take only top right corner (bottom left corner is a repeat and the diagonal is all 0s as its distance to itself)
+            dists = np.triu(dists)
+            dists = dists[np.where(dists != 0)]
+            avg_dists.append(np.mean(dists))
+            min_dists.append(np.min(dists))
+            max_dists.append(np.max(dists))
+
+        expected_avg_dist = np.mean(avg_dists)*width
+        expected_min_dist = np.mean(min_dists)*width
+        expected_max_dist = np.mean(max_dists)*width
+
+        return expected_avg_dist, expected_min_dist, expected_max_dist
 
 
 class Detector(object):
@@ -592,7 +780,7 @@ class Detector(object):
     '''
     def __init__(self, legend = False):
         
-        self.crop_size = 6
+        self.crop_size = 10
         
         # define the models
 
@@ -624,9 +812,6 @@ class Detector(object):
         array[0,0,:,:] = (array[0,0,:,:] - mean_f)#/torch.std(array[0,0,:,:])
         array[0,1,:,:] = (array[0,1,:,:] - mean_e)#/torch.std(array[0,1,:,:])
         return array
-    
-    def norm1_(self, array):
-    
 
     def norm2(self, array):
         '''
@@ -712,27 +897,30 @@ class Detector(object):
             bp: the brightest pixel in the crop
             new_centre: the new centre of the crop
         '''
+        crop_shape = crop.shape
+        # make a copy of the crop that has no pixel below 0
+        crop_copy = crop-np.min(crop)
+        cropc = np.zeros(crop_shape)
+        # use crop only within the specified borders
+        cropc[min_border:max_border,min_border:max_border] = crop_copy[min_border:max_border,min_border:max_border].copy()
+        # get brightest pixel in the crop
+        brightest_pix = np.unravel_index(np.argmax(cropc), cropc.shape)
+        # The top-left of the crop is at coordinate - (2*crop_size - 1) for even or coordinate - 2*crop_size for odd
+        # A simpler way is to calculate the offset from the crop center
+        crop_center_coord = np.array([d // 2 for d in crop_shape])
+        offset = np.array(brightest_pix) - crop_center_coord
+        # swap offset[0] and offset[1] to match the coordinate system
+        new_centre = coordinate.copy() + offset
+        # label scan with new centre 
        
-        cropc = np.zeros((2*self.crop_size-1,2*self.crop_size-1))
-        cropc[min_border:max_border,min_border:max_border] += crop[min_border:max_border,min_border:max_border].copy()
-        
-        # max/min normalise (we look for brightest pixel so have to make sure that it's not going to be the zero border)
-        cropc[min_border:max_border,min_border:max_border] = (cropc[min_border:max_border,min_border:max_border]-np.min(cropc[min_border:max_border,min_border:max_border]))/(np.max(cropc[min_border:max_border,min_border:max_border])-np.min(cropc[min_border:max_border,min_border:max_border]))
-        brightest_pix = np.unravel_index( np.argmax(cropc), (2*self.crop_size-1,2*self.crop_size-1) )
-        
-        # redefine scan so the brightest pixel is the centre
-        new_centre = coordinate.copy() - self.crop_size + [1,1] + np.array(brightest_pix)
-        
-        y, x = new_centre
-        if (new_centre != coordinate).any:
+        bp = brightest_pix
+        if (new_centre != coordinate).any():
             # only redefine the crop if the centre has actually been moved
-            if self.crop_size%2 == 0:
-                crop = scan[ int(y-self.crop_size):int(y+self.crop_size-1), int(x-self.crop_size):int(x+self.crop_size-1)].copy()
-                bp = np.unravel_index( np.argmax(crop), (2*self.crop_size-1,2*self.crop_size-1) )
-            else:
-                crop = scan[ int(y-self.crop_size):int(y+self.crop_size), int(x-self.crop_size):int(x+self.crop_size)].copy()
-                bp = np.unravel_index( np.argmax(crop), (2*self.crop_size,2*self.crop_size) )
-        
+            y, x = new_centre
+            half_size = self.crop_size
+            crop = scan[ int(y-half_size):int(y+half_size), int(x-half_size):int(x+half_size)].copy()
+            bp = np.unravel_index( np.argmax(crop-np.min(crop)), (2*self.crop_size,2*self.crop_size) )
+
         return crop, bp, new_centre
 
     def finder(self, si_scan, radius=3):
@@ -750,9 +938,7 @@ class Detector(object):
         # array is the input array consisting of the topography in filled and empty
         # segmented is the output from the UNET
         
-        # make everything in array non-negative. Needed for when finding features later
-        scan = si_scan.scan.copy()
-        scanc = scan-np.min(scan)
+        scanc = si_scan.scan.copy()
         
         scan_filled = np.pad(scanc[:,:,0].copy(), pad_width = 2*self.crop_size, mode = 'reflect')
         scan_empty = np.pad(scanc[:,:,1].copy(), pad_width = 2*self.crop_size, mode = 'reflect')
@@ -799,7 +985,6 @@ class Detector(object):
                 
                 coord = np.array(np.unravel_index(temp_array.argmax(), temp_array.shape))
                 temp_features.append(coord)
-                # features += temp_features ?
 
                 # now find what feature it is
                 y, prediction, coord = self.label_feature(si_scan, scan_filled, scan_empty, coord, DVcoords)
@@ -830,37 +1015,47 @@ class Detector(object):
         Returns:
             prediction (int): the label of the feature            
         '''
-
         res = si_scan.xres
         # for each feature coord, find distance from the DVs
         min_dist = (3/512)*res
         
         scan = np.stack((scan_filled, scan_empty), axis=2)
        
-
         y, x = coord.copy()+2*self.crop_size # add crop_size since we padded the array
         
-        if self.crop_size%2 == 0:
-            window = np.expand_dims(scan[y-self.crop_size:y+self.crop_size-1, x-self.crop_size:x+self.crop_size-1,:], axis=(0) ).copy()
-        else:
-            window = np.expand_dims(scan[y-self.crop_size:y+self.crop_size, x-self.crop_size:x+self.crop_size,:], axis=(0) ).copy()
+        window = np.expand_dims(scan[y-self.crop_size:y+self.crop_size, x-self.crop_size:x+self.crop_size,:], axis=(0) ).copy()
         
         # training data was standardised so that each bright feature was centered on 
         # brightest pixel (separately for filled and empty states).
-        # Must do the same for real data. We do so iteratively (recentre twice at most)
+        
+        # border for recentring. Only pixels within this border are considered as part of the feature
+        # this is done in case there's some other feature nearby.
+        min_border = 1
+        max_border = (2*self.crop_size) - min_border
+       # plt.imshow(window[0,:,:,0], cmap='afmhot')
+       # plt.title('before filled')
+       # plt.show()
+       # plt.imshow(window[0,:,:,1], cmap='afmhot')
+       # plt.title('before empty')
+       # plt.show()
+
+        centre = (self.crop_size, self.crop_size)
+       # print('centre: ', centre)
         if (coord>res-self.crop_size).any() or (coord<self.crop_size).any():
             # if the feature is very near the border, we only recentre once
-            window[0,:,:,0], bp1, coord_f = self.recentre(window[0,:,:,0], scan_filled, coord.copy()+2*self.crop_size, min_border=2, max_border=8)
-            window[0,:,:,1], bp2, coord_e = self.recentre(window[0,:,:,1], scan_empty, coord.copy()+2*self.crop_size, min_border=2, max_border=8)
+            window[0,:,:,0], bp1, coord_f = self.recentre(window[0,:,:,0], scan_filled, coord.copy()+2*self.crop_size, min_border=min_border, max_border=max_border)
+            window[0,:,:,1], bp2, coord_e = self.recentre(window[0,:,:,1], scan_empty, coord.copy()+2*self.crop_size, min_border=min_border, max_border=max_border)
         else:
-            window[0,:,:,0], bp1, coord_f = self.recentre(window[0,:,:,0], scan_filled, coord.copy()+2*self.crop_size, min_border=2, max_border=8)
-            if bp1!=(5,5):
-                window[0,:,:,0], bp1, coord_f = self.recentre(window[0,:,:,0], scan_filled, coord_f, min_border=3, max_border=7)    
+            window[0,:,:,0], bp1, coord_f = self.recentre(window[0,:,:,0], scan_filled, coord.copy()+2*self.crop_size,min_border=min_border, max_border=max_border)
+            #print(bp1)
+            if bp1!= centre:
+         #       print('recentring')
+                window[0,:,:,0], bp1, coord_f = self.recentre(window[0,:,:,0], scan_filled, coord_f, min_border=min_border+2, max_border=max_border-2)    
             # Now recentre the empty state scans
-            window[0,:,:,1], bp2, coord_e = self.recentre(window[0,:,:,1], scan_empty, coord.copy()+2*self.crop_size, min_border=2, max_border=8)
-            if bp2!=(5,5):
-                window[0,:,:,1], bp2, coord_e = self.recentre(window[0,:,:,1], scan_empty, coord_e, min_border=3, max_border=7)
-            
+            window[0,:,:,1], bp2, coord_e = self.recentre(window[0,:,:,1], scan_empty, coord.copy()+2*self.crop_size, min_border=min_border, max_border=max_border)
+            if bp2!=centre:
+                window[0,:,:,1], bp2, coord_e = self.recentre(window[0,:,:,1], scan_empty, coord_e, min_border=min_border+2, max_border=max_border-2)
+
         coord =  coord_f.copy() - self.crop_size
 
         window = np.transpose(window, (0,3,1,2))
@@ -869,15 +1064,27 @@ class Detector(object):
         
         self.windows.append(window)
         #plt.imshow(window[0,0,:,:], cmap='afmhot')
+        #plt.title('filled')
         #plt.show()
+        #plt.imshow(window[0,1,:,:], cmap='afmhot')
+        #plt.title('empty')
+        #plt.show()
+        # rotate window by 90, 180, 270 degrees and stack all together then predict and average
+        window = torch.stack((window, torch.rot90(window, 1, [2,3]), torch.rot90(window, 2, [2,3]), torch.rot90(window, 3, [2,3])), dim=0).squeeze(1)
         if si_scan.As:
             torch.manual_seed(0)
-            y = self.model_As(window)
             y = self.model_As(window)
         elif not si_scan.As:     
             torch.manual_seed(0)
             y = self.model_DB(window)
+        # y is a tensor of shape (4, 4)
+        # softmax along dim=-1
+        y = torch.nn.functional.softmax(y, dim=-1)
+        #print('y: ', y)
+        # sum along dim=0
+        y = torch.sum(y, dim=0)
         prediction = torch.argmax(y)+1
+        #print(prediction)
         if prediction == 1:
             si_scan.feature_coords['oneDB'].append(coord-self.crop_size)
         elif prediction == 2:
@@ -885,7 +1092,7 @@ class Detector(object):
         elif prediction == 3:
             si_scan.feature_coords['anomalies'].append(coord-self.crop_size)
         #elif prediction==4 it's lattice (i.e UNet probably made wrong prediction)
-        elif prediction == 5:
+        elif prediction == 4:
             si_scan.feature_coords['As'].append(coord-self.crop_size)      
 
         #else:
@@ -912,8 +1119,8 @@ class Detector(object):
         array = si_scan.scan[:,:,0].copy()
         As = si_scan.As
 
-        # max/min normalise
-        array = (array-np.min(array))/(np.max(array)-np.min(array))
+        # make the 0 of the scan be the minimum value in the scan
+        array = (array-np.min(array))
         # patches for UNets for bright  (patch size is 32)
         dim = int(res//win_size)
         sqrt_num_patches = ((res-win_size)//(win_size//2)+1)
@@ -925,7 +1132,6 @@ class Detector(object):
         # normalise and turn to tensor
         patches = self.norm2(torch.tensor(patches).float())
    
-
         # find bright features
         torch.manual_seed(0)
         si_scan.mask_bright_features = self.UNET_predict(patches, self.UNETbright, sqrt_num_patches, res, patch_res = win_size)
@@ -957,9 +1163,9 @@ class Detector(object):
             self.remove_noise(si_scan) 
         else:
             # min/max normalise the scan
-            si_scan.scan[:,:,0] = (si_scan.scan[:,:,0]-np.min(si_scan.scan[:,:,0]))/(np.max(si_scan.scan[:,:,0])-np.min(si_scan.scan[:,:,0]))
-            si_scan.scan[:,:,1] = (si_scan.scan[:,:,1]-np.min(si_scan.scan[:,:,1]))/(np.max(si_scan.scan[:,:,1])-np.min(si_scan.scan[:,:,1]))
-        
+            si_scan.scan[:,:,0] = (si_scan.scan[:,:,0]-np.min(si_scan.scan[:,:,0]))#/(np.max(si_scan.scan[:,:,0])-np.min(si_scan.scan[:,:,0]))
+            si_scan.scan[:,:,1] = (si_scan.scan[:,:,1]-np.min(si_scan.scan[:,:,1]))#/(np.max(si_scan.scan[:,:,1])-np.min(si_scan.scan[:,:,1]))
+            
 
         # get coordinates for the bright spots and also their labels (they're just numbered from 1 upwards)
         # inoformation is stored in si_scan.mask_... and self.coords
@@ -1059,6 +1265,148 @@ class Detector(object):
         # gives a density of features assuming uniform distribution
         return len(coords)/(self.size**2)
     '''
+
+
+    def remove_noise(self, scan, trace):
+        '''
+        Removes noise from image using ML model.
+        It assumes input image has a 512pixels to every 100nm (change it to this if it isn't!).
+        It also assumes the trace is the filled state, and retrace is the empty state.
+
+        Use after the standard clean up has been carried out (plane level+scan line align).
+
+        Args:
+            scan (STM object): STM object to remove noise from
+            trace (string): 'trace up' or 'trace down' depending on the scan to denoise
+        Returns:
+            Nothing. Changes the scan object in place (the scan.trace_up/down_proc).
+
+        '''
+        # stack the scans
+        if trace == 'trace up':
+            image = np.stack((scan.trace_up_proc, scan.retrace_up_proc), axis=0)
+        elif trace == 'trace down':
+            image = np.stack((scan.trace_down_proc, scan.retrace_down_proc), axis=0)
+        else:
+            raise ValueError('trace must be either "trace up" or "trace down"')
+
+        # plot the two channels
+        plt.figure(figsize=(20,20))
+        plt.subplot(1,2,1)
+        plt.title('Filled state original')
+        plt.imshow(image[0,:,:], cmap='afmhot')
+        plt.subplot(1,2,2)
+        plt.imshow(image[1,:,:], cmap='afmhot')
+        plt.title('Empty state original')
+        plt.show()
+
+
+        for i in range(3):
+            # select models to use
+            if i == 0 or i == 2:
+                model_fill = self.denoise_fill_FFT
+                model_empty = self.denoise_empty_FFT
+            if i == 1:
+                model_fill = self.denoise_fill_MSSSIM
+                model_empty = self.denoise_empty_MSSSIM
+
+            # prepare image for denoising
+            # model takes crops of 256x256
+
+            res = image.shape[2]
+            # split filled and empty
+            filled = image[0,:,:].copy()
+            empty = image[1,:,:].copy()
+
+            win_size = 256
+            step = win_size//2
+            sqrt_num_patches = ((res-win_size)//(win_size//2)+1)
+
+            patches_filled = np.reshape( pat.patchify(filled, (win_size, win_size), step=step), ( ( sqrt_num_patches**2 , 1, win_size,win_size) ) )
+            patches_empty = np.reshape( pat.patchify(empty, (win_size, win_size), step=step), ( ( sqrt_num_patches**2 , 1, win_size,win_size) ) )
+
+            # normalise and turn to tensor
+            patches_filled = self.norm2(torch.tensor(patches_filled).float())
+            patches_empty = self.norm2(torch.tensor(patches_empty).float())
+
+            # remove noise
+            torch.manual_seed(0) # set seed to get reliably reproducible results
+            pred_patches_fill = model_fill(patches_filled).detach().numpy()
+            pred_patches_empty = model_empty(patches_empty).detach().numpy()
+
+            # min max normalise
+            pred_patches_fill = self.norm2(torch.tensor(pred_patches_fill).float())
+            pred_patches_empty = self.norm2(torch.tensor(pred_patches_empty).float())
+
+            pred_patches_fill = np.reshape(pred_patches_fill, (sqrt_num_patches, sqrt_num_patches, 1, win_size, win_size))
+            pred_patches_empty = np.reshape(pred_patches_empty, (sqrt_num_patches, sqrt_num_patches, 1, win_size, win_size))
+
+            # recombine patches
+            # they have an overlap of 128 pixels. We apply window function to avoid issues at overlap
+            sine_sqd_1d = torch.sin(torch.linspace(0, np.pi, win_size))**2
+            sine_sqd_2d = sine_sqd_1d.unsqueeze(0) * sine_sqd_1d.unsqueeze(1)
+
+            pred_filled = torch.zeros((res, res))
+            pred_empty = torch.zeros((res, res))
+
+            for i in range(sqrt_num_patches):        
+                for j in range(sqrt_num_patches):
+                    sine_sqd_win = sine_sqd_2d.clone()
+                    # change window function at the edges of border
+                    if j == 0:
+                        sine_sqd_win[:, :step] = sine_sqd_1d.unsqueeze(1) * torch.ones(win_size, step)
+                    elif j == sqrt_num_patches - 1:
+                        sine_sqd_win[:, step:] = sine_sqd_1d.unsqueeze(1) * torch.ones(win_size, step)
+                    if i == 0:
+                        sine_sqd_win[:step, :] = sine_sqd_1d.unsqueeze(0) * torch.ones(step, win_size)
+                    elif i == sqrt_num_patches - 1:
+                        sine_sqd_win[step:, :] = sine_sqd_1d.unsqueeze(0) * torch.ones(step, win_size)
+                    if i == 0 and j == 0:
+                        sine_sqd_win[:step,:step] = 1
+                    if i == sqrt_num_patches - 1 and j == sqrt_num_patches - 1:
+                        sine_sqd_win[step:,step:] = 1
+                    if i == sqrt_num_patches - 1 and j == 0:
+                        sine_sqd_win[step:,:step] = 1
+                    if i == 0 and j == sqrt_num_patches - 1:
+                        sine_sqd_win[:step,step:] = 1
+
+                    pred_filled[i * step:(i * step) + win_size, j * step:(j * step) + win_size] = pred_filled[i * step:(i * step) + win_size, j * step:(j * step) + win_size] + sine_sqd_win * pred_patches_fill[i, j, 0, :, :]     
+                    pred_empty[i * step:(i * step) + win_size, j * step:(j * step) + win_size] = pred_empty[i * step:(i * step) + win_size, j * step:(j * step) + win_size] + sine_sqd_win * pred_patches_empty[i, j, 0, :, :]
+
+            # redefine image
+            image[0,:,:] = pred_filled.detach().numpy()
+            image[1,:,:] = pred_empty.detach().numpy()
+
+            # plot the two channels
+            plt.figure(figsize=(20,20))
+            plt.subplot(1,2,1)
+            if i == 0:
+                plt.title('Filled state denoised with FFT')
+            if i == 1:
+                plt.title('Filled state denoised with FFT then MSSSIM')
+            if i == 2:
+                plt.title('Filled state denoised with FFT then MSSSIM then FFT')
+            plt.imshow(image[0,:,:], cmap='afmhot')
+            plt.subplot(1,2,2)
+            plt.imshow(image[1,:,:], cmap='afmhot')
+            if i == 0:
+                plt.title('Filled state denoised with FFT')
+            if i == 1:
+                plt.title('Filled state denoised with FFT then MSSSIM')
+            if i == 2:
+                plt.title('Filled state denoised with FFT then MSSSIM then FFT')
+            plt.show()
+
+            # redefine the scan
+            #if trace == 'trace up':
+            #    scan.trace_up_proc = pred_filled.detach().numpy()
+            #    scan.retrace_up_proc = pred_empty.detach().numpy()
+            #else:
+            #    scan.trace_down_proc = pred_filled.detach().numpy()
+            #    scan.retrace_down_proc = pred_empty.detach().numpy()
+
+        return
+
 
 class segmented_scan_stitcher(object):
     '''

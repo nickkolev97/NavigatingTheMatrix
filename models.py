@@ -310,11 +310,9 @@ class UNet(nn.Module):
 
 class Classifier(nn.Module):
     # classiifier network
-
-    def __init__(self, channels=2, crop_size=11, n_outputs=7, fc_layers=2, fc_nodes=200, dropout=0.2):
+    def __init__(self, channels, crop_size, n_outputs, fc_layers, fc_nodes, dropout):
         super().__init__()
         self.fc_layers = fc_layers
-        
         self.convolutional_relu_stack = nn.Sequential(
             nn.Conv2d(channels, 32, 3, stride=1, padding='valid'),
             nn.BatchNorm2d(32),
@@ -322,8 +320,14 @@ class Classifier(nn.Module):
             nn.Conv2d(32, 64, 3, stride=1, padding='valid'),
             nn.BatchNorm2d(64),
             nn.ReLU(),
+            nn.Conv2d(64, 128, 3, stride=1, padding='valid'),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),            
+            nn.Conv2d(128, 256, 3, stride=1, padding='valid'),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
             nn.Flatten(),
-            nn.Linear(in_features = (crop_size-4)**2 *64, out_features=fc_nodes),
+            nn.LazyLinear(out_features=fc_nodes),
             nn.Dropout(dropout),
             nn.ReLU(),
             nn.BatchNorm1d(fc_nodes),
@@ -345,13 +349,13 @@ class Classifier(nn.Module):
         x = self.convolutional_relu_stack(x)
         for i in range(self.fc_layers-1):
             x = self.linear_relu_stack(x)
+        logits = self.linear_relu_stack_last(x) 
         if training == True:
-            x = self.linear_relu_stack_last(x)
-            logits = torch.nn.functional.softmax(x,dim=1)
             return logits
         else: 
-            x = torch.nn.functional.normalize(x)
-            return x
+            logits = torch.nn.functional.softmax(logits, dim=1)
+            return logits
+        
         
 class Autoencoder(nn.Module):
     def __init__(self, num_convs_between_pools):

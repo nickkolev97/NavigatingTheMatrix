@@ -143,7 +143,7 @@ class STM(object):
             elif i == 3: scan_ = 'retrace down'
 
             im, message = mtrx_data.select_image(traces[i])
-            im.data = 1e9*im.data
+            im.data = 1e9*im.data # convert to nm
             if im.data.shape[0]/self.standard_pix_ratio_y != im.data.shape[1]/self.standard_pix_ratio_x:
                 scan_complete = False # assume scan was interupted before completion
             else: scan_complete = True
