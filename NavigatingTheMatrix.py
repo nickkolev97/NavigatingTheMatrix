@@ -35,7 +35,7 @@ class STM(object):
             y_offset (float): The y-offset for the image.
             x_offset (float): The x-offset for the image.
             angle (float): The angle of the image.
-            standard_pix_ratio (bool or float): The standard pixel ratio. False if you don't want the pixels to be downsampled, or the ratio if you do want it downsampled (num_pix/nm e.g. 512/100).
+            standard_pix_ratio (bool or float or tuple of bools/floats): The standard pixel ratio. False if you don't want the pixels to be downsampled, or the ratio if you do want it downsampled (num_pix/nm e.g. 512/100). If it is a scan that has a different number of points per line and lines, then give a tuple instead: (ratio_in_y, ratio_in_x)
             from_file (bool): Whether to load the data from the file. If False, the data will be loaded from the dictionary.
             scan_dict (dict): The dictionary of the scan + metadata. Only used if from_file is False.
         """
@@ -644,6 +644,8 @@ def correct_path(path, write_field_size):
         for l, point in enumerate(subpath):
             sin_arg = write_field_size*point[0]*np.pi/raster_lengths[raster]
             correction = np.sum(k_values[raster]*np.sin(sin_arg))
+            if raster_lengths[raster] == 0:
+                print(f'Warning: raster length is 0 for raster {raster}, check your Matlab path for identical points!')
             new_subpath.append( [ point[0] + toggle*correction, point[1] ] )
             npoint += 1
 
